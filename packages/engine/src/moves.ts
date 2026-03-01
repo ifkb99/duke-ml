@@ -1,0 +1,270 @@
+import type {
+  Coord, GameMove, GameState, MovePattern, Offset, Player, TileInstance,
+} from './types.js';
+import { TILE_REGISTRY } from './tiles.js';
+import { BOARD_SIZE } from './state.js';
+
+function inBounds(coord: Coord): boolean {
+  return coord.row >= 0 && coord.row < BOARD_SIZE
+      && coord.col >= 0 && coord.col < BOARD_SIZE;
+}
+
+function adjustOffset(offset: Offset, player: Player): Offset {
+  return player === 'P1' ? offset : { dRow: -offset.dRow, dCol: offset.dCol };
+}
+
+function addOffset(coord: Coord, offset: Offset): Coord {
+  return { row: coord.row + offset.dRow, col: coord.col + offset.dCol };
+}
+
+function tileAt(state: GameState, coord: Coord): TileInstance | null {
+  const id = state.board[coord.row][coord.col];
+  return id ? state.tiles.get(id) ?? null : null;
+}
+
+function isEnemy(tile: TileInstance, player: Player): boolean {
+  return tile.owner !== player;
+}
+
+function isFriendly(tile: TileInstance, player: Player): boolean {
+  return tile.owner === player;
+}
+
+// --- Helpers ---
+
+function gcd(a: number, b: number): number {
+  a = Math.abs(a);
+  b = Math.abs(b);
+  while (b) { [a, b] = [b, a % b]; }
+  return a;
+}
+
+/**
+ * For multi-square step moves, check that all intermediate squares are empty.
+ * Steps cannot move through pieces (unlike jumps).
+ * Only applies when the offset is reducible (gcd > 1), e.g. F2 = 2×F.
+ */
+function isStepPathClear(state: GameState, from: Coord, adjusted: Offset): boolean {
+  const g = gcd(Math.abs(adjusted.dRow), Math.abs(adjusted.dCol));
+  if (g <= 1) return true;
+  const unitDr = adjusted.dRow / g;
+  const unitDc = adjusted.dCol / g;
+  for (let i = 1; i < g; i++) {
+    const intermediate: Coord = { row: from.row + unitDr * i, col: from.col + unitDc * i };
+    if (!inBounds(intermediate)) return false;
+    if (state.board[intermediate.row][intermediate.col] !== null) return false;
+  }
+  return true;
+}
+
+// --- Per-pattern generators ---
+
+function generateStepMoves(
+  state: GameState, from: Coord, pattern: MovePattern, player: Player,
+): GameMove[] {
+  const moves: GameMove[] = [];
+  for (const offset of pattern.offsets) {
+    const adjusted = adjustOffset(offset, player);
+    const to = addOffset(from, adjusted);
+    if (!inBounds(to)) continue;
+    if (!isStepPathClear(state, from, adjusted)) continue;
+    const occupant = tileAt(state, to);
+    if (!occupant || isEnemy(occupant, player)) {
+      moves.push({ type: 'move', from, to });
+    }
+  }
+  return moves;
+}
+
+function generateSlideMoves(
+  state: GameState, from: Coord, pattern: MovePattern, player: Player,
+): GameMove[] {
+  const moves: GameMove[] = [];
+  for (const dir of pattern.offsets) {
+    const adjusted = adjustOffset(dir, player);
+    let current = from;
+    while (true) {
+      current = addOffset(current, adjusted);
+      if (!inBounds(current)) break;
+      const occupant = tileAt(state, current);
+      if (occupant && isFriendly(occupant, player)) break;
+      moves.push({ type: 'move', from, to: current });
+      if (occupant && isEnemy(occupant, player)) break;
+    }
+  }
+  return moves;
+}
+
+function generateJumpMoves(
+  state: GameState, from: Coord, pattern: MovePattern, player: Player,
+): GameMove[] {
+  const moves: GameMove[] = [];
+  for (const offset of pattern.offsets) {
+    const to = addOffset(from, adjustOffset(offset, player));
+    if (!inBounds(to)) continue;
+    const occupant = tileAt(state, to);
+    if (!occupant || isEnemy(occupant, player)) {
+      moves.push({ type: 'move', from, to });
+    }
+  }
+  return moves;
+}
+
+function generateStrikeMoves(
+  state: GameState, from: Coord, pattern: MovePattern, player: Player,
+): GameMove[] {
+  const moves: GameMove[] = [];
+  for (const offset of pattern.offsets) {
+    const target = addOffset(from, adjustOffset(offset, player));
+    if (!inBounds(target)) continue;
+    const occupant = tileAt(state, target);
+    if (occupant && isEnemy(occupant, player)) {
+      moves.push({ type: 'strike', from, target });
+    }
+  }
+  return moves;
+}
+
+const ORTHOGONAL_DIRS: Offset[] = [
+  { dRow: -1, dCol: 0 },
+  { dRow: 1, dCol: 0 },
+  { dRow: 0, dCol: -1 },
+  { dRow: 0, dCol: 1 },
+];
+
+function generateCommandMoves(
+  state: GameState, commander: Coord, pattern: MovePattern, player: Player,
+): GameMove[] {
+  const moves: GameMove[] = [];
+  for (const offset of pattern.offsets) {
+    const target = addOffset(commander, adjustOffset(offset, player));
+    if (!inBounds(target)) continue;
+    const occupant = tileAt(state, target);
+    if (!occupant || !isFriendly(occupant, player)) continue;
+    // Cannot command self
+    if (target.row === commander.row && target.col === commander.col) continue;
+
+    for (const dir of ORTHOGONAL_DIRS) {
+      const dest = addOffset(target, dir);
+      if (!inBounds(dest)) continue;
+      const destOccupant = tileAt(state, dest);
+      // Can't move commanded tile onto the commander's own square
+      if (dest.row === commander.row && dest.col === commander.col) continue;
+      if (!destOccupant || isEnemy(destOccupant, player)) {
+        moves.push({ type: 'command', commander, target, targetTo: dest });
+      }
+    }
+  }
+  return moves;
+}
+
+/**
+ * Jump-slide: jump over the first square in the direction (ignoring its
+ * contents), then slide from the second square onward.
+ * The piece can land on the 2nd, 3rd, ... square until blocked.
+ */
+function generateJumpSlideMoves(
+  state: GameState, from: Coord, pattern: MovePattern, player: Player,
+): GameMove[] {
+  const moves: GameMove[] = [];
+  for (const dir of pattern.offsets) {
+    const adjusted = adjustOffset(dir, player);
+    const jumpedOver = addOffset(from, adjusted);
+    if (!inBounds(jumpedOver)) continue;
+
+    let current = jumpedOver;
+    while (true) {
+      current = addOffset(current, adjusted);
+      if (!inBounds(current)) break;
+      const occupant = tileAt(state, current);
+      if (occupant && isFriendly(occupant, player)) break;
+      moves.push({ type: 'move', from, to: current });
+      if (occupant && isEnemy(occupant, player)) break;
+    }
+  }
+  return moves;
+}
+
+function generateTileMoves(state: GameState, tile: TileInstance): GameMove[] {
+  const def = TILE_REGISTRY.get(tile.defName);
+  if (!def) return [];
+
+  const side = tile.side === 'A' ? def.sideA : def.sideB;
+  const moves: GameMove[] = [];
+
+  for (const pattern of side.patterns) {
+    switch (pattern.type) {
+      case 'step':
+        moves.push(...generateStepMoves(state, tile.position, pattern, tile.owner));
+        break;
+      case 'slide':
+        moves.push(...generateSlideMoves(state, tile.position, pattern, tile.owner));
+        break;
+      case 'jump':
+        moves.push(...generateJumpMoves(state, tile.position, pattern, tile.owner));
+        break;
+      case 'jump_slide':
+        moves.push(...generateJumpSlideMoves(state, tile.position, pattern, tile.owner));
+        break;
+      case 'strike':
+        moves.push(...generateStrikeMoves(state, tile.position, pattern, tile.owner));
+        break;
+      case 'command':
+        moves.push(...generateCommandMoves(state, tile.position, pattern, tile.owner));
+        break;
+    }
+  }
+
+  return moves;
+}
+
+function generatePlacementMoves(state: GameState): GameMove[] {
+  const player = state.currentPlayer;
+  const bag = state.bags[player];
+  if (bag.length === 0) return [];
+
+  // Find the Duke
+  let dukePos: Coord | null = null;
+  for (const tile of state.tiles.values()) {
+    if (tile.owner === player && tile.defName === 'Duke') {
+      dukePos = tile.position;
+      break;
+    }
+  }
+  if (!dukePos) return [];
+
+  // Deduplicate bag tile names
+  const uniqueNames = [...new Set(bag)];
+
+  const moves: GameMove[] = [];
+  for (const dir of ORTHOGONAL_DIRS) {
+    const pos = addOffset(dukePos, dir);
+    if (!inBounds(pos)) continue;
+    if (state.board[pos.row][pos.col] !== null) continue;
+
+    for (const tileName of uniqueNames) {
+      moves.push({ type: 'place', tileName, position: pos });
+    }
+  }
+
+  return moves;
+}
+
+export function generateAllMoves(state: GameState): GameMove[] {
+  if (state.status !== 'active') return [];
+
+  const moves: GameMove[] = [];
+  const player = state.currentPlayer;
+
+  // Tile moves
+  for (const tile of state.tiles.values()) {
+    if (tile.owner === player) {
+      moves.push(...generateTileMoves(state, tile));
+    }
+  }
+
+  // Placement moves
+  moves.push(...generatePlacementMoves(state));
+
+  return moves;
+}

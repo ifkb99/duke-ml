@@ -1,0 +1,12 @@
+{
+  "name": "the-duke",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces --if-present",
+    "dev": "npm run dev --workspace=packages/web"
+  }
+}

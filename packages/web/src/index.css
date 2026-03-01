@@ -1,0 +1,40 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --surface-2: #0f3460;
+  --accent: #e94560;
+  --text: #eee;
+  --text-muted: #8892b0;
+  --p1-color: #64b5f6;
+  --p2-color: #ef5350;
+  --board-light: #2a2a4a;
+  --board-dark: #1e1e3a;
+  --highlight: rgba(233, 69, 96, 0.35);
+  --selected: rgba(100, 181, 246, 0.4);
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#root {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem;
+}
