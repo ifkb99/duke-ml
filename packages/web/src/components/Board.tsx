@@ -20,11 +20,9 @@ export function Board({
   const at = (r: number, c: number, coord: Coord | null) =>
     coord?.row === r && coord?.col === c;
 
-  // Step 2 of command: highlight valid destinations for the commanded tile
   const isCommandDest = (r: number, c: number) =>
     commandTarget && commandDestinations.some(d => d.row === r && d.col === c);
 
-  // Step 1: highlight legal targets (moves, strikes, and commandable friendly tiles)
   const isLegalTarget = (r: number, c: number) => {
     if (!selectedTile || drawMode || commandTarget) return false;
     return legalMoves.some(m => {
@@ -44,7 +42,6 @@ export function Board({
     });
   };
 
-  // Is this cell a commandable target (vs a move/strike target)?
   const isCommandableTarget = (r: number, c: number) => {
     if (!selectedTile || drawMode || commandTarget) return false;
     return legalMoves.some(
@@ -64,13 +61,14 @@ export function Board({
     <div style={{
       display: 'grid',
       gridTemplateColumns: `repeat(${BOARD_SIZE}, 1fr)`,
-      gap: '2px',
-      background: '#111',
-      padding: '2px',
-      borderRadius: '8px',
+      gap: '1.5px',
+      background: 'rgba(201,168,76,0.12)',
+      padding: '3px',
+      borderRadius: 'var(--radius-lg)',
       width: '100%',
-      maxWidth: '480px',
+      maxWidth: '460px',
       aspectRatio: '1',
+      boxShadow: '0 2px 20px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(201,168,76,0.08)',
     }}>
       {rows.map(r =>
         cols.map(c => {
@@ -86,12 +84,21 @@ export function Board({
 
           let bg: string;
           if (selected) bg = 'var(--selected)';
-          else if (cmdTarget) bg = 'rgba(255, 183, 77, 0.35)';
-          else if (cmdDest) bg = 'rgba(255, 183, 77, 0.25)';
-          else if (commandable) bg = 'rgba(255, 183, 77, 0.2)';
+          else if (cmdTarget) bg = 'rgba(201,168,76,0.3)';
+          else if (cmdDest) bg = 'rgba(201,168,76,0.2)';
+          else if (commandable) bg = 'rgba(201,168,76,0.15)';
           else if (legalTarget) bg = 'var(--highlight)';
-          else if (placeable) bg = 'rgba(233, 69, 96, 0.2)';
+          else if (placeable) bg = 'var(--accent-dim)';
           else bg = dark ? 'var(--board-dark)' : 'var(--board-light)';
+
+          const isCorner = (r === 0 || r === BOARD_SIZE - 1) && (c === 0 || c === BOARD_SIZE - 1);
+          let radius = '0';
+          if (isCorner) {
+            if (r === 0 && c === 0) radius = '7px 0 0 0';
+            else if (r === 0 && c === BOARD_SIZE - 1) radius = '0 7px 0 0';
+            else if (r === BOARD_SIZE - 1 && c === 0) radius = '0 0 0 7px';
+            else radius = '0 0 7px 0';
+          }
 
           return (
             <div
@@ -105,87 +112,61 @@ export function Board({
                 cursor: 'pointer',
                 position: 'relative',
                 aspectRatio: '1',
+                borderRadius: radius,
                 transition: 'background 0.15s',
               }}
             >
               {tile && <Tile tile={tile} />}
 
-              {/* Command destination marker (empty square) */}
               {!tile && cmdDest && (
                 <div style={{
-                  width: '36%',
-                  height: '36%',
-                  borderRadius: '50%',
-                  background: '#ffb74d',
-                  opacity: 0.6,
+                  width: '34%', height: '34%', borderRadius: '50%',
+                  background: 'var(--accent)', opacity: 0.5,
                 }} />
               )}
 
-              {/* Commandable tile border highlight */}
               {tile && commandable && (
                 <div style={{
-                  position: 'absolute',
-                  inset: '2px',
-                  borderRadius: '6px',
-                  border: '2px solid #ffb74d',
-                  pointerEvents: 'none',
+                  position: 'absolute', inset: '2px', borderRadius: '5px',
+                  border: '2px solid var(--accent)', pointerEvents: 'none',
                 }} />
               )}
 
-              {/* Command target being commanded (step 2 active) */}
               {tile && cmdTarget && (
                 <div style={{
-                  position: 'absolute',
-                  inset: '2px',
-                  borderRadius: '6px',
-                  border: '2px solid #ffb74d',
-                  boxShadow: '0 0 6px rgba(255,183,77,0.5)',
+                  position: 'absolute', inset: '2px', borderRadius: '5px',
+                  border: '2px solid var(--accent)',
+                  boxShadow: '0 0 8px rgba(201,168,76,0.4)',
                   pointerEvents: 'none',
                 }} />
               )}
 
-              {/* Command destination marker (occupied by enemy — capture) */}
               {tile && cmdDest && (
                 <div style={{
-                  position: 'absolute',
-                  inset: '2px',
-                  borderRadius: '6px',
-                  border: '2px dashed #ffb74d',
-                  pointerEvents: 'none',
+                  position: 'absolute', inset: '2px', borderRadius: '5px',
+                  border: '2px dashed var(--accent)', pointerEvents: 'none',
                 }} />
               )}
 
-              {/* Draw placement target */}
               {!tile && placeable && (
                 <div style={{
-                  width: '40%',
-                  height: '40%',
-                  borderRadius: '50%',
-                  background: 'var(--accent)',
-                  opacity: 0.4,
+                  width: '36%', height: '36%', borderRadius: '50%',
+                  background: 'var(--accent)', opacity: 0.35,
                   border: '2px solid var(--accent)',
                 }} />
               )}
 
-              {/* Regular move/strike target dot */}
               {legalTarget && !tile && !commandable && (
                 <div style={{
-                  width: '30%',
-                  height: '30%',
-                  borderRadius: '50%',
-                  background: 'var(--accent)',
-                  opacity: 0.5,
+                  width: '28%', height: '28%', borderRadius: '50%',
+                  background: 'var(--accent)', opacity: 0.45,
                 }} />
               )}
 
-              {/* Strike target on enemy tile */}
               {legalTarget && tile && !commandable && (
                 <div style={{
-                  position: 'absolute',
-                  inset: '2px',
-                  borderRadius: '6px',
-                  border: '2px solid var(--accent)',
-                  pointerEvents: 'none',
+                  position: 'absolute', inset: '2px', borderRadius: '5px',
+                  border: '2px solid var(--accent)', pointerEvents: 'none',
                 }} />
               )}
             </div>

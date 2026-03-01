@@ -15,24 +15,117 @@ interface TileDetailProps {
   commandTargetTile: TileInstance | null;
 }
 
-const btnStyle: React.CSSProperties = {
-  padding: '0.4rem 0.9rem',
-  borderRadius: '6px',
-  border: '1px solid var(--surface-2)',
-  background: 'var(--surface)',
-  color: 'var(--text)',
-  cursor: 'pointer',
-  fontSize: '0.8rem',
-  fontWeight: 500,
-  transition: 'background 0.15s, border-color 0.15s',
-};
+function Badge({ text, color }: { text: string; color?: string }) {
+  return (
+    <span style={{
+      fontSize: '0.6rem',
+      padding: '1px 7px',
+      borderRadius: '4px',
+      background: color ? `${color}18` : 'var(--surface-3)',
+      color: color ?? 'var(--text-muted)',
+      fontWeight: 500,
+      letterSpacing: '0.02em',
+    }}>
+      {text}
+    </span>
+  );
+}
+
+function TileName({ name, color }: { name: string; color: string }) {
+  return (
+    <span style={{
+      fontSize: '0.9rem',
+      fontWeight: 700,
+      color,
+      fontFamily: 'var(--font-display)',
+      letterSpacing: '0.04em',
+    }}>
+      {name}
+    </span>
+  );
+}
+
+/** Side indicator — mirrors the physical tile metaphor (edge bar + corner fold for B) */
+function SideIndicator({ side, color }: { side: 'A' | 'B'; color: string }) {
+  const isSideB = side === 'B';
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '22px',
+      height: '22px',
+      borderRadius: '4px',
+      background: color,
+      position: 'relative',
+      overflow: 'hidden',
+      fontSize: '0.55rem',
+      fontWeight: 700,
+      color: '#fff',
+      letterSpacing: 0,
+    }}>
+      {/* Edge bar */}
+      <span style={{
+        position: 'absolute',
+        left: '25%',
+        right: '25%',
+        height: '2px',
+        borderRadius: '1px',
+        background: 'rgba(255,255,255,0.5)',
+        ...(isSideB ? { top: '1px' } : { bottom: '1px' }),
+      }} />
+      {/* Corner fold for B */}
+      {isSideB && (
+        <span style={{
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          width: 0,
+          height: 0,
+          borderStyle: 'solid',
+          borderWidth: '0 7px 7px 0',
+          borderColor: 'transparent rgba(255,255,255,0.3) transparent transparent',
+        }} />
+      )}
+      {side}
+    </span>
+  );
+}
+
+function MovesetPair({ def, flip, currentSide }: {
+  def: { name: string; sideA: any; sideB: any };
+  flip: boolean;
+  currentSide?: 'A' | 'B';
+}) {
+  return (
+    <div style={{
+      display: 'flex',
+      gap: '12px',
+      justifyContent: 'center',
+      flexWrap: 'wrap',
+    }}>
+      <MovesetGrid
+        side={def.sideA}
+        label={currentSide === 'A' ? 'Side A — active' : currentSide ? 'Side A — after flip' : 'Side A (placed)'}
+        flipVertical={flip}
+        isCurrent={currentSide ? currentSide === 'A' : undefined}
+      />
+      <MovesetGrid
+        side={def.sideB}
+        label={currentSide === 'B' ? 'Side B — active' : currentSide ? 'Side B — after flip' : 'Side B (after flip)'}
+        flipVertical={flip}
+        isCurrent={currentSide ? currentSide === 'B' : undefined}
+      />
+    </div>
+  );
+}
 
 export function TileDetail({
   tile, viewingBagTile, currentPlayer, bagSize, canDraw,
   drawMode, selectedDrawTile, onStartDraw,
   commandTarget, commandTargetTile,
 }: TileDetailProps) {
-  // Draw mode: show the randomly drawn tile + placement prompt (no cancel)
+
   if (drawMode && selectedDrawTile) {
     const def = TILE_REGISTRY.get(selectedDrawTile);
     if (!def) return null;
@@ -40,144 +133,96 @@ export function TileDetail({
 
     return (
       <div style={containerStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--accent)' }}>
-            Drew: {def.name}
-          </span>
-          <span style={{
-            fontSize: '0.65rem',
-            padding: '1px 6px',
-            borderRadius: '4px',
-            background: 'var(--surface-2)',
-            color: 'var(--text-muted)',
-          }}>
-            Places on Side A
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <TileName name={def.name} color="var(--accent)" />
+          <Badge text="Drawn — place on Side A" color="var(--accent)" />
         </div>
-        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-          Click a highlighted square adjacent to your Duke to place
+        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+          Click a highlighted square adjacent to your Duke
         </div>
-        <div style={{ display: 'flex', gap: '20px', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <MovesetGrid side={def.sideA} label="Side A" flipVertical={flip} />
-          <MovesetGrid side={def.sideB} label="Side B" flipVertical={flip} />
-        </div>
+        <MovesetPair def={def} flip={flip} currentSide="A" />
       </div>
     );
   }
 
-  // Command mode step 2: picking destination for commanded tile
   if (commandTarget && commandTargetTile && tile) {
     const cmdDef = TILE_REGISTRY.get(commandTargetTile.defName);
     const commanderDef = TILE_REGISTRY.get(tile.defName);
     if (!cmdDef || !commanderDef) return null;
-    const isP1 = tile.owner === 'P1';
-    const ownerColor = isP1 ? 'var(--p1-color)' : 'var(--p2-color)';
+    const ownerColor = tile.owner === 'P1' ? 'var(--p1-color)' : 'var(--p2-color)';
 
     return (
       <div style={containerStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '0.95rem', fontWeight: 700, color: ownerColor }}>
-            {commanderDef.name}
-          </span>
-          <span style={{
-            fontSize: '0.65rem',
-            padding: '1px 6px',
-            borderRadius: '4px',
-            background: 'rgba(255, 183, 77, 0.2)',
-            color: '#ffb74d',
-          }}>
-            Commanding {cmdDef.name}
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <TileName name={commanderDef.name} color={ownerColor} />
+          <Badge text={`Commanding ${cmdDef.name}`} color="var(--accent)" />
         </div>
-        <div style={{ fontSize: '0.75rem', color: '#ffb74d' }}>
+        <div style={{ fontSize: '0.7rem', color: 'var(--accent)' }}>
           Click a highlighted square to move {cmdDef.name}
         </div>
       </div>
     );
   }
 
-  // Viewing a bag tile's moveset
   if (viewingBagTile) {
     const def = TILE_REGISTRY.get(viewingBagTile.name);
     if (!def) return null;
     const isP1 = viewingBagTile.owner === 'P1';
     const ownerColor = isP1 ? 'var(--p1-color)' : 'var(--p2-color)';
-    const flip = isP1;
 
     return (
       <div style={containerStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '0.95rem', fontWeight: 700, color: ownerColor }}>
-            {def.name}
-          </span>
-          <span style={{
-            fontSize: '0.65rem',
-            padding: '1px 6px',
-            borderRadius: '4px',
-            background: 'var(--surface-2)',
-            color: 'var(--text-muted)',
-          }}>
-            In Bag
-          </span>
-          <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
-            {isP1 ? 'Light' : 'Dark'}
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <TileName name={def.name} color={ownerColor} />
+          <Badge text="In Bag" />
+          <Badge text={isP1 ? 'Light' : 'Dark'} color={ownerColor} />
         </div>
-        <div style={{ display: 'flex', gap: '20px', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <MovesetGrid side={def.sideA} label="Side A (placed)" flipVertical={flip} />
-          <MovesetGrid side={def.sideB} label="Side B (after flip)" flipVertical={flip} />
-        </div>
+        <MovesetPair def={def} flip={isP1} />
       </div>
     );
   }
 
-  // Board tile selected
   if (tile) {
     const def = TILE_REGISTRY.get(tile.defName);
     if (!def) return null;
 
-    const side = tile.side === 'A' ? def.sideA : def.sideB;
-    const otherSide = tile.side === 'A' ? def.sideB : def.sideA;
     const isP1 = tile.owner === 'P1';
     const ownerColor = isP1 ? 'var(--p1-color)' : 'var(--p2-color)';
-    const flip = isP1;
+    const gradient = isP1
+      ? 'linear-gradient(135deg, #1e6cb8, #2584d8)'
+      : 'linear-gradient(135deg, #b83030, #d04545)';
     const isOwnDuke = tile.owner === currentPlayer && tile.defName === 'Duke';
-    const showDrawButton = isOwnDuke && canDraw;
 
     return (
       <div style={containerStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '0.95rem', fontWeight: 700, color: ownerColor }}>
-            {def.name}
-          </span>
-          <span style={{
-            fontSize: '0.65rem',
-            padding: '1px 6px',
-            borderRadius: '4px',
-            background: 'var(--surface-2)',
-            color: 'var(--text-muted)',
-          }}>
-            Side {tile.side}
-          </span>
-          <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
-            {isP1 ? 'Light' : 'Dark'}
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <TileName name={def.name} color={ownerColor} />
+          <SideIndicator side={tile.side as 'A' | 'B'} color={gradient} />
+          <Badge text={isP1 ? 'Light' : 'Dark'} color={ownerColor} />
         </div>
 
-        <div style={{ display: 'flex', gap: '20px', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <MovesetGrid side={side} label={`Current (${tile.side})`} flipVertical={flip} />
-          <MovesetGrid side={otherSide} label={`After flip (${tile.side === 'A' ? 'B' : 'A'})`} flipVertical={flip} />
-        </div>
+        <MovesetPair
+          def={{ name: def.name, sideA: def.sideA, sideB: def.sideB }}
+          flip={isP1}
+          currentSide={tile.side as 'A' | 'B'}
+        />
 
-        {showDrawButton && (
+        {isOwnDuke && canDraw && (
           <button
             onClick={onStartDraw}
             style={{
-              ...btnStyle,
-              background: 'var(--surface-2)',
-              borderColor: 'var(--accent)',
+              padding: '0.4rem 1rem',
+              borderRadius: 'var(--radius)',
+              border: '1.5px solid var(--accent)',
+              background: 'transparent',
               color: 'var(--accent)',
+              cursor: 'pointer',
+              fontSize: '0.78rem',
               fontWeight: 600,
+              fontFamily: 'var(--font-body)',
+              letterSpacing: '0.02em',
+              transition: 'background 0.15s',
+              marginTop: '2px',
             }}
           >
             Draw from Bag ({bagSize})
@@ -187,10 +232,15 @@ export function TileDetail({
     );
   }
 
-  // Nothing selected
   return (
     <div style={containerStyle}>
-      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>
+      <div style={{
+        fontSize: '0.72rem',
+        color: 'var(--text-muted)',
+        textAlign: 'center',
+        padding: '10px 0',
+        fontStyle: 'italic',
+      }}>
         Select a tile to view its moveset
       </div>
     </div>
@@ -204,8 +254,8 @@ const containerStyle: React.CSSProperties = {
   gap: '8px',
   padding: '12px 16px',
   background: 'var(--surface)',
-  borderRadius: '8px',
+  borderRadius: 'var(--radius-lg)',
   border: '1px solid var(--surface-2)',
   width: '100%',
-  minHeight: '80px',
+  minHeight: '60px',
 };

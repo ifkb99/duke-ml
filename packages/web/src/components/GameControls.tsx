@@ -8,76 +8,89 @@ interface GameControlsProps {
   onNewGame: () => void;
   onUndo: () => void;
   canUndo: boolean;
+  compact?: boolean;
 }
 
-const btnStyle: React.CSSProperties = {
-  padding: '0.4rem 0.9rem',
-  borderRadius: '6px',
-  border: '1px solid var(--surface-2)',
+const btn: React.CSSProperties = {
+  padding: '0.35rem 0.7rem',
+  borderRadius: 'var(--radius)',
+  border: '1px solid var(--surface-3)',
   background: 'var(--surface)',
   color: 'var(--text)',
   cursor: 'pointer',
-  fontSize: '0.85rem',
+  fontSize: '0.78rem',
   fontWeight: 500,
-  transition: 'background 0.15s',
+  transition: 'background 0.15s, border-color 0.15s',
+  letterSpacing: '0.01em',
 };
 
 export function GameControls({
-  mode, onModeChange, state, onNewGame, onUndo, canUndo,
+  mode, onModeChange, state, onNewGame, onUndo, canUndo, compact,
 }: GameControlsProps) {
+  const playerColor = state.currentPlayer === 'P1' ? 'var(--p1-color)' : 'var(--p2-color)';
+  const playerLabel = state.currentPlayer === 'P1' ? 'Light' : 'Dark';
+
   return (
     <div style={{
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
-      gap: '0.5rem',
+      gap: '0.35rem',
       width: '100%',
     }}>
       <div style={{
         display: 'flex',
-        gap: '0.5rem',
+        gap: '0.4rem',
         flexWrap: 'wrap',
         justifyContent: 'center',
+        alignItems: 'center',
       }}>
         <select
           value={mode}
           onChange={e => onModeChange(e.target.value as GameMode)}
           style={{
-            ...btnStyle,
+            ...btn,
             appearance: 'none',
-            paddingRight: '1.5rem',
-            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238892b0' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+            paddingRight: '1.4rem',
+            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%236e7086' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
             backgroundRepeat: 'no-repeat',
-            backgroundPosition: 'right 0.5rem center',
+            backgroundPosition: 'right 0.45rem center',
+            fontSize: compact ? '0.72rem' : '0.78rem',
           }}
         >
-          <option value="hotseat">Hot Seat (2P)</option>
-          <option value="vs-random">vs Random Bot</option>
-          <option value="vs-minimax">vs Minimax AI</option>
+          <option value="hotseat">Hot Seat</option>
+          <option value="vs-random">vs Random</option>
+          <option value="vs-minimax">vs Minimax</option>
         </select>
 
-        <button onClick={onNewGame} style={btnStyle}>
-          New Game
-        </button>
-
+        <button onClick={onNewGame} style={btn}>New</button>
         <button
           onClick={onUndo}
           disabled={!canUndo}
-          style={{ ...btnStyle, opacity: canUndo ? 1 : 0.4 }}
+          style={{ ...btn, opacity: canUndo ? 1 : 0.3 }}
         >
           Undo
         </button>
       </div>
 
       <div style={{
-        fontSize: '0.85rem',
+        fontSize: '0.76rem',
         color: 'var(--text-muted)',
+        fontWeight: 400,
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.4em',
       }}>
-        Turn {state.turnNumber} &middot;{' '}
-        <span style={{ color: state.currentPlayer === 'P1' ? 'var(--p1-color)' : 'var(--p2-color)', fontWeight: 600 }}>
-          {state.currentPlayer === 'P1' ? 'Light' : 'Dark'}
+        <span>Turn {state.turnNumber}</span>
+        <span style={{ opacity: 0.4 }}>&middot;</span>
+        <span style={{
+          color: playerColor,
+          fontWeight: 600,
+        }}>
+          {playerLabel}
         </span>
-        {' '}to move &middot; Bag: {state.bags[state.currentPlayer].length} tiles
+        <span style={{ opacity: 0.4 }}>&middot;</span>
+        <span>Bag: {state.bags[state.currentPlayer].length}</span>
       </div>
     </div>
   );

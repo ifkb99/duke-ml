@@ -6,10 +6,11 @@ interface BagPanelProps {
   isActive: boolean;
   viewingTile: string | null;
   onTileClick: (name: string, owner: Player) => void;
+  compact?: boolean;
 }
 
 const TILE_SHORT: Record<string, string> = {
-  Footman: 'F',
+  Footman: 'Ft',
   Pikeman: 'Pk',
   Knight: 'Kn',
   Longbowman: 'Lb',
@@ -26,7 +27,7 @@ const TILE_SHORT: Record<string, string> = {
 };
 
 export function BagPanel({
-  player, bag, isActive, viewingTile, onTileClick,
+  player, bag, isActive, viewingTile, onTileClick, compact,
 }: BagPanelProps) {
   const counts = new Map<string, number>();
   for (const name of bag) {
@@ -36,82 +37,130 @@ export function BagPanel({
   const isP1 = player === 'P1';
   const color = isP1 ? 'var(--p1-color)' : 'var(--p2-color)';
   const label = isP1 ? 'Light' : 'Dark';
+  const gradient = isP1
+    ? 'linear-gradient(135deg, #1a5ca0, #2778c4)'
+    : 'linear-gradient(135deg, #a03030, #c44040)';
 
   return (
     <div style={{
       display: 'flex',
       flexDirection: 'column',
-      gap: '3px',
-      minWidth: '72px',
-      maxWidth: '84px',
-      opacity: bag.length === 0 ? 0.4 : 1,
+      gap: '5px',
+      flex: compact ? '1 1 0' : undefined,
+      minWidth: compact ? 0 : '130px',
+      maxWidth: compact ? undefined : '150px',
+      opacity: bag.length === 0 ? 0.35 : 1,
+      transition: 'opacity 0.3s',
     }}>
+      {/* Header */}
       <div style={{
-        fontSize: '0.7rem',
-        fontWeight: 600,
-        color: isActive ? color : 'var(--text-muted)',
-        textAlign: 'center',
-        paddingBottom: '2px',
-        borderBottom: isActive ? `2px solid ${color}` : '1px solid var(--surface-2)',
-        letterSpacing: '0.03em',
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: '6px',
+        padding: '0 2px 4px',
+        borderBottom: `1.5px solid ${isActive ? color : 'var(--surface-3)'}`,
+        transition: 'border-color 0.3s',
       }}>
-        {label} Bag ({bag.length})
+        <span style={{
+          fontSize: '0.72rem',
+          fontWeight: 600,
+          color: isActive ? color : 'var(--text-muted)',
+          letterSpacing: '0.04em',
+          transition: 'color 0.3s',
+        }}>
+          {label}
+        </span>
+        <span style={{
+          fontSize: '0.62rem',
+          color: 'var(--text-muted)',
+          fontWeight: 400,
+        }}>
+          {bag.length}
+        </span>
       </div>
 
       {bag.length === 0 && (
-        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textAlign: 'center', padding: '8px 0' }}>
+        <div style={{
+          fontSize: '0.65rem',
+          color: 'var(--text-muted)',
+          textAlign: 'center',
+          padding: '8px 0',
+          fontStyle: 'italic',
+        }}>
           Empty
         </div>
       )}
 
-      {[...counts.entries()].map(([name, count]) => {
-        const isViewing = viewingTile === name;
+      {/* Tile chips */}
+      <div style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '3px',
+      }}>
+        {[...counts.entries()].map(([name, count]) => {
+          const isViewing = viewingTile === name;
+          const abbr = TILE_SHORT[name] ?? name.slice(0, 2);
 
-        return (
-          <div
-            key={name}
-            onClick={() => onTileClick(name, player)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '3px 6px',
-              borderRadius: '4px',
-              fontSize: '0.65rem',
-              background: isViewing ? 'var(--selected)' : 'var(--surface)',
-              cursor: 'pointer',
-              border: isViewing ? `1px solid ${color}` : '1px solid transparent',
-              transition: 'background 0.15s',
-            }}
-          >
-            <span style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '18px',
-              height: '18px',
-              borderRadius: '3px',
-              background: isP1
-                ? 'linear-gradient(135deg, #1565c0, #1976d2)'
-                : 'linear-gradient(135deg, #c62828, #d32f2f)',
-              color: '#fff',
-              fontSize: '0.55rem',
-              fontWeight: 700,
-              flexShrink: 0,
-            }}>
-              {TILE_SHORT[name] ?? name[0]}
-            </span>
-            <span style={{ color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {name}
-            </span>
-            {count > 1 && (
-              <span style={{ color: 'var(--text-muted)', marginLeft: 'auto', fontSize: '0.6rem' }}>
-                ×{count}
+          return (
+            <div
+              key={name}
+              onClick={() => onTileClick(name, player)}
+              title={name}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '3px',
+                padding: '3px 5px',
+                borderRadius: 'var(--radius)',
+                fontSize: '0.62rem',
+                background: isViewing ? 'var(--surface-3)' : 'var(--surface)',
+                cursor: 'pointer',
+                border: isViewing ? `1.5px solid ${color}` : '1.5px solid var(--surface-2)',
+                transition: 'all 0.15s',
+                whiteSpace: 'nowrap',
+                userSelect: 'none',
+              }}
+            >
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '18px',
+                height: '18px',
+                borderRadius: '4px',
+                background: gradient,
+                color: '#fff',
+                fontSize: '0.55rem',
+                fontWeight: 700,
+                flexShrink: 0,
+                letterSpacing: '-0.02em',
+              }}>
+                {abbr}
               </span>
-            )}
-          </div>
-        );
-      })}
+              {!compact && (
+                <span style={{
+                  color: isViewing ? 'var(--text)' : 'var(--text-muted)',
+                  fontWeight: isViewing ? 500 : 400,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  maxWidth: '80px',
+                }}>
+                  {name}
+                </span>
+              )}
+              {count > 1 && (
+                <span style={{
+                  fontSize: '0.55rem',
+                  color: 'var(--text-muted)',
+                  fontWeight: 500,
+                }}>
+                  {count}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

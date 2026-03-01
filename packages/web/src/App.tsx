@@ -4,12 +4,14 @@ import { GameControls } from './components/GameControls.js';
 import { BagPanel } from './components/BagPanel.js';
 import { TileDetail } from './components/TileDetail.js';
 import { useGame } from './hooks/useGame.js';
+import { useIsMobile } from './hooks/useIsMobile.js';
 
 export type GameMode = 'hotseat' | 'vs-random' | 'vs-minimax';
 
 export function App() {
   const [mode, setMode] = useState<GameMode>('hotseat');
   const game = useGame(mode);
+  const isMobile = useIsMobile(660);
 
   const { state } = game;
 
@@ -19,21 +21,45 @@ export function App() {
     return id ? state.tiles.get(id) ?? null : null;
   }, [game.commandTarget, state]);
 
+  const p1Bag = (
+    <BagPanel
+      player="P1"
+      bag={state.bags.P1}
+      isActive={state.currentPlayer === 'P1'}
+      viewingTile={game.viewingBagTile?.owner === 'P1' ? game.viewingBagTile.name : null}
+      onTileClick={game.onBagTileClick}
+      compact={isMobile}
+    />
+  );
+
+  const p2Bag = (
+    <BagPanel
+      player="P2"
+      bag={state.bags.P2}
+      isActive={state.currentPlayer === 'P2'}
+      viewingTile={game.viewingBagTile?.owner === 'P2' ? game.viewingBagTile.name : null}
+      onTileClick={game.onBagTileClick}
+      compact={isMobile}
+    />
+  );
+
   return (
     <div style={{
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
-      gap: '0.75rem',
+      gap: isMobile ? '0.6rem' : '0.85rem',
       width: '100%',
-      maxWidth: '720px',
-      padding: '0 8px',
+      maxWidth: '820px',
     }}>
+      {/* Title */}
       <h1 style={{
-        fontSize: '1.6rem',
+        fontFamily: 'var(--font-display)',
+        fontSize: isMobile ? '1.3rem' : '1.7rem',
         fontWeight: 700,
-        letterSpacing: '0.05em',
+        letterSpacing: '0.12em',
         color: 'var(--accent)',
+        textAlign: 'center',
       }}>
         THE DUKE
       </h1>
@@ -45,42 +71,56 @@ export function App() {
         onNewGame={game.newGame}
         onUndo={game.undo}
         canUndo={game.canUndo}
+        compact={isMobile}
       />
 
-      <div style={{
-        display: 'flex',
-        gap: '8px',
-        width: '100%',
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-      }}>
-        <BagPanel
-          player="P1"
-          bag={state.bags.P1}
-          isActive={state.currentPlayer === 'P1'}
-          viewingTile={game.viewingBagTile?.owner === 'P1' ? game.viewingBagTile.name : null}
-          onTileClick={game.onBagTileClick}
-        />
+      {/* Desktop: bags flanking board */}
+      {!isMobile && (
+        <div style={{
+          display: 'flex',
+          gap: '10px',
+          width: '100%',
+          alignItems: 'flex-start',
+          justifyContent: 'center',
+        }}>
+          {p1Bag}
+          <Board
+            state={state}
+            selectedTile={game.selectedTile}
+            legalMoves={game.legalMoves}
+            onCellClick={game.onCellClick}
+            drawMode={game.drawMode}
+            placementTargets={game.placementTargets}
+            commandTarget={game.commandTarget}
+            commandDestinations={game.commandDestinations}
+          />
+          {p2Bag}
+        </div>
+      )}
 
-        <Board
-          state={state}
-          selectedTile={game.selectedTile}
-          legalMoves={game.legalMoves}
-          onCellClick={game.onCellClick}
-          drawMode={game.drawMode}
-          placementTargets={game.placementTargets}
-          commandTarget={game.commandTarget}
-          commandDestinations={game.commandDestinations}
-        />
-
-        <BagPanel
-          player="P2"
-          bag={state.bags.P2}
-          isActive={state.currentPlayer === 'P2'}
-          viewingTile={game.viewingBagTile?.owner === 'P2' ? game.viewingBagTile.name : null}
-          onTileClick={game.onBagTileClick}
-        />
-      </div>
+      {/* Mobile: board then bags below */}
+      {isMobile && (
+        <>
+          <Board
+            state={state}
+            selectedTile={game.selectedTile}
+            legalMoves={game.legalMoves}
+            onCellClick={game.onCellClick}
+            drawMode={game.drawMode}
+            placementTargets={game.placementTargets}
+            commandTarget={game.commandTarget}
+            commandDestinations={game.commandDestinations}
+          />
+          <div style={{
+            display: 'flex',
+            gap: '6px',
+            width: '100%',
+          }}>
+            {p1Bag}
+            {p2Bag}
+          </div>
+        </>
+      )}
 
       <TileDetail
         tile={game.selectedTileInstance}
@@ -97,11 +137,14 @@ export function App() {
 
       {state.status !== 'active' && (
         <div style={{
-          padding: '0.75rem 1.5rem',
+          padding: '0.75rem 2rem',
           background: 'var(--accent)',
-          borderRadius: '8px',
-          fontWeight: 600,
+          borderRadius: 'var(--radius-lg)',
+          fontWeight: 700,
           fontSize: '1.1rem',
+          color: '#0c0c18',
+          letterSpacing: '0.04em',
+          fontFamily: 'var(--font-display)',
         }}>
           {state.status === 'P1_wins' ? 'Light Wins!' : 'Dark Wins!'}
         </div>

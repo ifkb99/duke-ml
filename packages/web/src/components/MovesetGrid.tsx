@@ -1,23 +1,23 @@
-import type { MovePattern, MoveType, TileSide } from '@the-duke/engine';
+import type { MoveType, TileSide } from '@the-duke/engine';
 
 interface MovesetGridProps {
   side: TileSide;
   label: string;
-  /** Flip rows so "forward" points downward (for P1 pieces at the top of the board). */
   flipVertical?: boolean;
+  isCurrent?: boolean;
 }
 
 const GRID_SIZE = 7;
 const CENTER = 3;
 
 const MOVE_COLORS: Record<MoveType | 'self', string> = {
-  step:       '#64b5f6',
-  slide:      '#ba68c8',
-  jump:       '#81c784',
-  jump_slide: '#4dd0e1',
-  strike:     '#ef5350',
-  command:    '#ffb74d',
-  self:       '#555',
+  step:       '#5b9bd5',
+  slide:      '#a86dd4',
+  jump:       '#5dbf68',
+  jump_slide: '#3cc4d1',
+  strike:     '#d45555',
+  command:    '#c9a84c',
+  self:       '#3a3a52',
 };
 
 const MOVE_LABELS: Record<MoveType, string> = {
@@ -37,7 +37,6 @@ function buildGrid(side: TileSide, flip: boolean): CellInfo[][] {
     () => Array(GRID_SIZE).fill(null),
   );
 
-  // When flip is true (P1 at top of board), negate dRow so "forward" points down visually.
   const rowSign = flip ? -1 : 1;
 
   for (const pattern of side.patterns) {
@@ -90,48 +89,69 @@ function usedTypes(side: TileSide): MoveType[] {
   return [...types];
 }
 
-export function MovesetGrid({ side, label, flipVertical = false }: MovesetGridProps) {
+export function MovesetGrid({ side, label, flipVertical = false, isCurrent }: MovesetGridProps) {
   const grid = buildGrid(side, flipVertical);
   const types = usedTypes(side);
+  const cellSize = 22;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 500 }}>{label}</div>
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: '4px',
+      padding: '6px',
+      borderRadius: 'var(--radius)',
+      border: isCurrent
+        ? '1.5px solid var(--accent)'
+        : isCurrent === false
+          ? '1.5px solid var(--surface-3)'
+          : '1.5px solid transparent',
+      background: isCurrent
+        ? 'rgba(201,168,76,0.05)'
+        : 'transparent',
+      opacity: isCurrent === false ? 0.5 : 1,
+      transition: 'opacity 0.2s, border-color 0.2s, background 0.2s',
+    }}>
+      <div style={{
+        fontSize: '0.65rem',
+        color: isCurrent ? 'var(--accent)' : 'var(--text-muted)',
+        fontWeight: isCurrent ? 600 : 500,
+        letterSpacing: '0.02em',
+      }}>
+        {label}
+      </div>
       <div style={{
         display: 'grid',
-        gridTemplateColumns: `repeat(${GRID_SIZE}, 1fr)`,
+        gridTemplateColumns: `repeat(${GRID_SIZE}, ${cellSize}px)`,
         gap: '1px',
-        width: `${GRID_SIZE * 26}px`,
-        height: `${GRID_SIZE * 26}px`,
       }}>
         {grid.map((row, r) =>
           row.map((cell, c) => {
             const isCenter = r === CENTER && c === CENTER;
             const color = isCenter
               ? MOVE_COLORS.self
-              : cell
-                ? MOVE_COLORS[cell.type]
-                : 'transparent';
-            const opacity = cell?.distance === 3 ? 0.5 : cell?.distance === 2 ? 0.75 : 1;
+              : cell ? MOVE_COLORS[cell.type] : 'transparent';
+            const opacity = cell?.distance === 3 ? 0.45 : cell?.distance === 2 ? 0.7 : 1;
 
             return (
               <div
                 key={`${r}-${c}`}
                 style={{
-                  width: '25px',
-                  height: '25px',
+                  width: `${cellSize}px`,
+                  height: `${cellSize}px`,
                   borderRadius: isCenter ? '4px' : cell ? '3px' : '0',
                   background: color,
                   opacity: isCenter ? 1 : cell ? opacity : 1,
                   border: isCenter
-                    ? '2px solid #888'
+                    ? '1.5px solid var(--text-muted)'
                     : cell
                       ? `1px solid ${color}`
-                      : '1px solid rgba(255,255,255,0.04)',
+                      : '1px solid rgba(255,255,255,0.03)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  fontSize: '0.5rem',
+                  fontSize: '0.45rem',
                   color: '#fff',
                   fontWeight: 600,
                 }}
@@ -143,12 +163,13 @@ export function MovesetGrid({ side, label, flipVertical = false }: MovesetGridPr
         )}
       </div>
 
-      {/* Legend */}
-      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center' }}>
         {types.map(t => (
-          <div key={t} style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.6rem' }}>
+          <div key={t} style={{
+            display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.56rem',
+          }}>
             <div style={{
-              width: '8px', height: '8px', borderRadius: '2px',
+              width: '7px', height: '7px', borderRadius: '2px',
               background: MOVE_COLORS[t],
             }} />
             <span style={{ color: 'var(--text-muted)' }}>{MOVE_LABELS[t]}</span>
