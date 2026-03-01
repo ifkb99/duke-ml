@@ -81,7 +81,7 @@ export function GameControls({
         alignItems: 'center',
         gap: '0.4em',
       }}>
-        <span>Turn {state.turnNumber}</span>
+        <span>{state.status === 'setup' ? 'Setup' : `Turn ${state.turnNumber}`}</span>
         <span style={{ opacity: 0.4 }}>&middot;</span>
         <span style={{
           color: playerColor,
@@ -89,8 +89,12 @@ export function GameControls({
         }}>
           {playerLabel}
         </span>
-        <span style={{ opacity: 0.4 }}>&middot;</span>
-        <span>Bag: {state.bags[state.currentPlayer].length}</span>
+        {state.status !== 'setup' && (
+          <>
+            <span style={{ opacity: 0.4 }}>&middot;</span>
+            <span>Bag: {state.bags[state.currentPlayer].length}</span>
+          </>
+        )}
       </div>
     </div>
   );

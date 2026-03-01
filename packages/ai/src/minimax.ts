@@ -30,21 +30,21 @@ function minimax(
 
   if (maximizing) {
     let value = -Infinity;
-    for (const move of moves) {
+    moves.forEach((move) => {
       const child = applyMove(state, move);
       value = Math.max(value, minimax(child, depth - 1, alpha, beta, false, stats));
       alpha = Math.max(alpha, value);
-      if (alpha >= beta) break;
-    }
+      if (alpha >= beta) return value;
+    });
     return value;
   } else {
     let value = Infinity;
-    for (const move of moves) {
+    moves.forEach((move) => {
       const child = applyMove(state, move);
       value = Math.min(value, minimax(child, depth - 1, alpha, beta, true, stats));
       beta = Math.min(beta, value);
-      if (alpha >= beta) break;
-    }
+      if (alpha >= beta) return value;
+    });
     return value;
   }
 }
@@ -63,7 +63,7 @@ export function findBestMove(state: GameState, depth = 4): MinimaxResult {
   let bestMove: GameMove = moves[0];
   let bestScore = maximizing ? -Infinity : Infinity;
 
-  for (const move of moves) {
+  moves.forEach((move) => {
     const child = applyMove(state, move);
     const score = minimax(child, depth - 1, -Infinity, Infinity, !maximizing, stats);
 
@@ -71,7 +71,7 @@ export function findBestMove(state: GameState, depth = 4): MinimaxResult {
       bestScore = score;
       bestMove = move;
     }
-  }
+  });
 
   return { move: bestMove, score: bestScore, nodesSearched: stats.nodes };
 }

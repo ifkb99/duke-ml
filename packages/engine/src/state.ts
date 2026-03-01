@@ -1,5 +1,5 @@
 import type {
-  BoardGrid, Coord, GameState, Player, SerializedGameState, TileInstance,
+  BoardGrid, GameState, SerializedGameState,
 } from './types.js';
 import { BAG_TILE_NAMES } from './tiles.js';
 
@@ -18,82 +18,18 @@ function shuffleArray<T>(arr: T[]): T[] {
   return a;
 }
 
-function placeTile(
-  board: BoardGrid,
-  tiles: Map<string, TileInstance>,
-  id: string,
-  tile: TileInstance,
-): void {
-  tiles.set(id, tile);
-  board[tile.position.row][tile.position.col] = id;
-}
-
-/**
- * Create the initial game state with both players' starting positions.
- *
- * P1 places Duke in their back row (row 0), P2 in row 5.
- * Each Duke gets two Footmen on orthogonally adjacent spaces.
- *
- * `dukeCol` lets callers control Duke column (default: col 2 for P1, col 3 for P2).
- */
-export function createInitialState(
-  p1DukeCol = 2,
-  p2DukeCol = 3,
-): GameState {
-  const board = createEmptyBoard();
-  const tiles = new Map<string, TileInstance>();
-
-  const placeDukeAndFootmen = (
-    player: Player,
-    dukeRow: number,
-    dukeCol: number,
-  ) => {
-    const dukeId = `${player}-Duke`;
-    placeTile(board, tiles, dukeId, {
-      defName: 'Duke',
-      owner: player,
-      side: 'A',
-      position: { row: dukeRow, col: dukeCol },
-      id: dukeId,
-    });
-
-    // Footmen on two orthogonally adjacent spaces.
-    // Place one in front of (toward center) and one to the side of the Duke.
-    const footmenPositions: Coord[] = player === 'P1'
-      ? [
-          { row: dukeRow + 1, col: dukeCol },     // in front (toward center)
-          { row: dukeRow, col: dukeCol + 1 },      // to the right
-        ]
-      : [
-          { row: dukeRow - 1, col: dukeCol },      // in front (toward center)
-          { row: dukeRow, col: dukeCol - 1 },      // to the left
-        ];
-
-    footmenPositions.forEach((pos, i) => {
-      const fId = `${player}-Footman-${i + 1}`;
-      placeTile(board, tiles, fId, {
-        defName: 'Footman',
-        owner: player,
-        side: 'A',
-        position: pos,
-        id: fId,
-      });
-    });
-  };
-
-  placeDukeAndFootmen('P1', 0, p1DukeCol);
-  placeDukeAndFootmen('P2', 5, p2DukeCol);
-
+export function createInitialState(): GameState {
   return {
-    board,
-    tiles,
+    board: createEmptyBoard(),
+    tiles: new Map(),
     bags: {
       P1: shuffleArray([...BAG_TILE_NAMES]),
       P2: shuffleArray([...BAG_TILE_NAMES]),
     },
     currentPlayer: 'P1',
-    turnNumber: 1,
-    status: 'active',
+    turnNumber: 0,
+    status: 'setup',
+    setupPhase: 'p1_duke',
   };
 }
 
@@ -110,6 +46,7 @@ export function cloneState(state: GameState): GameState {
     currentPlayer: state.currentPlayer,
     turnNumber: state.turnNumber,
     status: state.status,
+    setupPhase: state.setupPhase,
   };
 }
 
@@ -121,6 +58,7 @@ export function serialize(state: GameState): SerializedGameState {
     currentPlayer: state.currentPlayer,
     turnNumber: state.turnNumber,
     status: state.status,
+    setupPhase: state.setupPhase,
   };
 }
 
@@ -134,5 +72,6 @@ export function deserialize(data: SerializedGameState): GameState {
     currentPlayer: data.currentPlayer,
     turnNumber: data.turnNumber,
     status: data.status,
+    setupPhase: data.setupPhase,
   };
 }

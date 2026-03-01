@@ -1,8 +1,20 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import type { Coord, GameMove, GameState, Player, TileInstance } from '@the-duke/engine';
-import { createInitialState, generateAllMoves, applyMove } from '@the-duke/engine';
+import type { Coord, GameMove, GameState, Player, SetupPhase, TileInstance } from '@the-duke/engine';
+import {
+  createInitialState, generateAllMoves, applyMove,
+  getSetupTargets, applySetupPlacement,
+} from '@the-duke/engine';
 import { pickRandomMove, findBestMove } from '@the-duke/ai';
 import type { GameMode } from '../App.js';
+
+const SETUP_LABELS: Record<SetupPhase, string> = {
+  p1_duke: 'Light: Place your Duke on the back row',
+  p1_footman1: 'Light: Place a Footman next to the Duke',
+  p1_footman2: 'Light: Place a Footman next to the Duke',
+  p2_duke: 'Dark: Place your Duke on the back row',
+  p2_footman1: 'Dark: Place a Footman next to the Duke',
+  p2_footman2: 'Dark: Place a Footman next to the Duke',
+};
 
 export interface UseGameReturn {
   state: GameState;
@@ -20,14 +32,11 @@ export interface UseGameReturn {
   selectedDrawTile: string | null;
   placementTargets: Coord[];
   startDraw: () => void;
-  /**
-   * When non-null, we're in the second step of a command:
-   * the commander is at `selectedTile`, the friendly target to
-   * move is at `commandTarget`. The board highlights valid destinations.
-   */
   commandTarget: Coord | null;
-  /** Valid destination squares for the commanded tile. */
   commandDestinations: Coord[];
+  /** Setup phase info */
+  setupTargets: Coord[];
+  setupLabel: string | null;
 }
 
 export function useGame(mode: GameMode): UseGameReturn {
@@ -40,7 +49,14 @@ export function useGame(mode: GameMode): UseGameReturn {
   const [commandTarget, setCommandTarget] = useState<Coord | null>(null);
   const aiThinking = useRef(false);
 
-  const allMoves = generateAllMoves(state);
+  const isSetup = state.status === 'setup';
+  const allMoves = isSetup ? [] : generateAllMoves(state);
+
+  const setupTargets = useMemo(() => {
+    return isSetup ? getSetupTargets(state) : [];
+  }, [state, isSetup]);
+
+  const setupLabel = isSetup && state.setupPhase ? SETUP_LABELS[state.setupPhase] : null;
 
   const selectedTileInstance = useMemo<TileInstance | null>(() => {
     if (!selectedTile) return null;
@@ -64,7 +80,6 @@ export function useGame(mode: GameMode): UseGameReturn {
     return targets;
   }, [drawMode, selectedDrawTile, allMoves]);
 
-  // Valid destinations for the commanded tile (step 3 of command)
   const commandDestinations = useMemo<Coord[]>(() => {
     if (!selectedTile || !commandTarget) return [];
     const seen = new Set<string>();
@@ -112,8 +127,14 @@ export function useGame(mode: GameMode): UseGameReturn {
     resetSelection();
   }, [state, resetSelection]);
 
+  const executeSetup = useCallback((coord: Coord) => {
+    setHistory(prev => [...prev, state]);
+    setState(applySetupPlacement(state, coord));
+    resetSelection();
+  }, [state, resetSelection]);
+
   const hasPlacementMoves = allMoves.some(m => m.type === 'place');
-  const canDraw = state.bags[state.currentPlayer].length > 0 && hasPlacementMoves;
+  const canDraw = !isSetup && state.bags[state.currentPlayer].length > 0 && hasPlacementMoves;
 
   const startDraw = useCallback(() => {
     if (!canDraw) return;
@@ -127,20 +148,32 @@ export function useGame(mode: GameMode): UseGameReturn {
   }, [state, canDraw]);
 
   const onBagTileClick = useCallback((name: string, owner: Player) => {
-    if (drawMode) return;
+    if (drawMode || isSetup) return;
     setSelectedTile(null);
     setCommandTarget(null);
     setViewingBagTile({ name, owner });
-  }, [drawMode]);
+  }, [drawMode, isSetup]);
 
-  // AI turn logic
+  // AI turn logic — covers both setup and normal play
   useEffect(() => {
-    if (state.status !== 'active') return;
     if (mode === 'hotseat') return;
+    if (state.currentPlayer !== 'P2') return;
+    if (aiThinking.current) return;
 
-    const isAiTurn = state.currentPlayer === 'P2';
-    if (!isAiTurn || aiThinking.current) return;
+    // Setup phase AI
+    if (isSetup && setupTargets.length > 0) {
+      aiThinking.current = true;
+      const timer = setTimeout(() => {
+        const pick = setupTargets[Math.floor(Math.random() * setupTargets.length)];
+        setHistory(prev => [...prev, state]);
+        setState(applySetupPlacement(state, pick));
+        aiThinking.current = false;
+      }, 300);
+      return () => { clearTimeout(timer); aiThinking.current = false; };
+    }
 
+    // Normal play AI
+    if (state.status !== 'active') return;
     aiThinking.current = true;
     const timer = setTimeout(() => {
       let move: GameMove | null = null;
@@ -158,13 +191,19 @@ export function useGame(mode: GameMode): UseGameReturn {
       aiThinking.current = false;
     }, 300);
 
-    return () => {
-      clearTimeout(timer);
-      aiThinking.current = false;
-    };
-  }, [state, mode]);
+    return () => { clearTimeout(timer); aiThinking.current = false; };
+  }, [state, mode, isSetup, setupTargets]);
 
   const onCellClick = useCallback((coord: Coord) => {
+    // Setup phase: only accept valid setup placements
+    if (isSetup) {
+      if (mode !== 'hotseat' && state.currentPlayer === 'P2') return;
+      if (setupTargets.some(t => t.row === coord.row && t.col === coord.col)) {
+        executeSetup(coord);
+      }
+      return;
+    }
+
     if (state.status !== 'active') return;
     if (mode !== 'hotseat' && state.currentPlayer === 'P2') return;
 
@@ -198,9 +237,7 @@ export function useGame(mode: GameMode): UseGameReturn {
         executeMove(move);
         return;
       }
-      // Clicked something invalid — back out of command target selection
       setCommandTarget(null);
-      // If they clicked a different own tile, select it
       if (clickedTile && clickedTile.owner === state.currentPlayer) {
         setSelectedTile(coord);
         return;
@@ -211,19 +248,16 @@ export function useGame(mode: GameMode): UseGameReturn {
 
     // If a tile is already selected, try to move/strike or start command flow
     if (selectedTile) {
-      // Check for command: clicking a friendly tile that's a valid command target
       const isCommandTarget = allMoves.some(
         m => m.type === 'command'
           && m.commander.row === selectedTile.row && m.commander.col === selectedTile.col
           && m.target.row === coord.row && m.target.col === coord.col,
       );
       if (isCommandTarget) {
-        // Enter step 2: show destinations for this commanded tile
         setCommandTarget(coord);
         return;
       }
 
-      // Check for move or strike
       const move = allMoves.find(m => {
         if (m.type === 'move') {
           return m.from.row === selectedTile.row && m.from.col === selectedTile.col
@@ -241,14 +275,12 @@ export function useGame(mode: GameMode): UseGameReturn {
         return;
       }
 
-      // Clicking same tile deselects
       if (selectedTile.row === coord.row && selectedTile.col === coord.col) {
         setSelectedTile(null);
         return;
       }
     }
 
-    // Select any tile on the board to view its moveset
     if (clickedTile) {
       setSelectedTile(coord);
       setCommandTarget(null);
@@ -257,7 +289,7 @@ export function useGame(mode: GameMode): UseGameReturn {
 
     setSelectedTile(null);
     setCommandTarget(null);
-  }, [state, selectedTile, commandTarget, allMoves, drawMode, selectedDrawTile, executeMove, mode]);
+  }, [state, selectedTile, commandTarget, allMoves, drawMode, selectedDrawTile, executeMove, executeSetup, mode, isSetup, setupTargets]);
 
   return {
     state,
@@ -277,5 +309,7 @@ export function useGame(mode: GameMode): UseGameReturn {
     startDraw,
     commandTarget,
     commandDestinations,
+    setupTargets,
+    setupLabel,
   };
 }

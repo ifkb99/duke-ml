@@ -1,5 +1,5 @@
-import type { GameMove, GameState, TileInstance } from './types.js';
-import { cloneState } from './state.js';
+import type { Coord, GameMove, GameState, SetupPhase, TileInstance } from './types.js';
+import { BOARD_SIZE, cloneState } from './state.js';
 import { hasAnyLegalMove } from './moves.js';
 
 let nextInstanceCounter = 0;
@@ -8,6 +8,139 @@ let nextInstanceCounter = 0;
 export function resetInstanceCounter(val = 0): void {
   nextInstanceCounter = val;
 }
+
+// ---------------------------------------------------------------------------
+// Setup phase
+// ---------------------------------------------------------------------------
+
+const ORTHOGONAL: readonly Coord[] = [
+  { row: -1, col: 0 }, { row: 1, col: 0 },
+  { row: 0, col: -1 }, { row: 0, col: 1 },
+];
+
+function findDukeCoord(state: GameState, owner: 'P1' | 'P2'): Coord | null {
+  for (const t of state.tiles.values()) {
+    if (t.defName === 'Duke' && t.owner === owner) return t.position;
+  }
+  return null;
+}
+
+function adjacentEmpty(state: GameState, origin: Coord): Coord[] {
+  const targets: Coord[] = [];
+  for (const d of ORTHOGONAL) {
+    const r = origin.row + d.row;
+    const c = origin.col + d.col;
+    if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE && !state.board[r][c]) {
+      targets.push({ row: r, col: c });
+    }
+  }
+  return targets;
+}
+
+/** Return valid placement squares for the current setup sub-phase. */
+export function getSetupTargets(state: GameState): Coord[] {
+  if (state.status !== 'setup' || !state.setupPhase) return [];
+
+  switch (state.setupPhase) {
+    case 'p1_duke': {
+      const targets: Coord[] = [];
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (!state.board[0][c]) targets.push({ row: 0, col: c });
+      }
+      return targets;
+    }
+    case 'p2_duke': {
+      const targets: Coord[] = [];
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (!state.board[BOARD_SIZE - 1][c]) targets.push({ row: BOARD_SIZE - 1, col: c });
+      }
+      return targets;
+    }
+    case 'p1_footman1':
+    case 'p1_footman2': {
+      const duke = findDukeCoord(state, 'P1');
+      return duke ? adjacentEmpty(state, duke) : [];
+    }
+    case 'p2_footman1':
+    case 'p2_footman2': {
+      const duke = findDukeCoord(state, 'P2');
+      return duke ? adjacentEmpty(state, duke) : [];
+    }
+  }
+}
+
+const SETUP_NEXT: Record<SetupPhase, SetupPhase | 'done'> = {
+  p1_duke: 'p1_footman1',
+  p1_footman1: 'p1_footman2',
+  p1_footman2: 'p2_duke',
+  p2_duke: 'p2_footman1',
+  p2_footman1: 'p2_footman2',
+  p2_footman2: 'done',
+};
+
+const SETUP_PLAYER: Record<SetupPhase, 'P1' | 'P2'> = {
+  p1_duke: 'P1',
+  p1_footman1: 'P1',
+  p1_footman2: 'P1',
+  p2_duke: 'P2',
+  p2_footman1: 'P2',
+  p2_footman2: 'P2',
+};
+
+/**
+ * Place a piece during setup. Returns a new state.
+ * Validates that `coord` is a valid target for the current sub-phase.
+ */
+export function applySetupPlacement(state: GameState, coord: Coord): GameState {
+  if (state.status !== 'setup' || !state.setupPhase) {
+    throw new Error('Not in setup phase');
+  }
+
+  const targets = getSetupTargets(state);
+  if (!targets.some(t => t.row === coord.row && t.col === coord.col)) {
+    throw new Error(`Invalid setup placement at (${coord.row},${coord.col})`);
+  }
+
+  const s = cloneState(state);
+  const phase = s.setupPhase!;
+  const player = SETUP_PLAYER[phase];
+
+  const isDukePhase = phase === 'p1_duke' || phase === 'p2_duke';
+  const defName = isDukePhase ? 'Duke' : 'Footman';
+
+  const id = `${player}-${defName}-${++nextInstanceCounter}`;
+  const tile: TileInstance = {
+    defName,
+    owner: player,
+    side: 'A',
+    position: { ...coord },
+    id,
+  };
+  s.tiles.set(id, tile);
+  s.board[coord.row][coord.col] = id;
+
+  if (!isDukePhase) {
+    const idx = s.bags[player].indexOf('Footman');
+    if (idx !== -1) s.bags[player].splice(idx, 1);
+  }
+
+  const next = SETUP_NEXT[phase];
+  if (next === 'done') {
+    s.status = 'active';
+    s.setupPhase = undefined;
+    s.currentPlayer = 'P1';
+    s.turnNumber = 1;
+  } else {
+    s.setupPhase = next;
+    s.currentPlayer = SETUP_PLAYER[next];
+  }
+
+  return s;
+}
+
+// ---------------------------------------------------------------------------
+// Normal gameplay
+// ---------------------------------------------------------------------------
 
 /**
  * Apply a move without checkmate detection.
@@ -96,19 +229,16 @@ function applyMoveTile(
   const fromId = s.board[move.from.row][move.from.col];
   if (!fromId) throw new Error(`No tile at (${move.from.row},${move.from.col})`);
 
-  // Capture if enemy at destination
   const toId = s.board[move.to.row][move.to.col];
   if (toId) {
     removeTile(s, toId);
   }
 
-  // Move tile
   const tile = s.tiles.get(fromId)!;
   s.board[move.from.row][move.from.col] = null;
   s.board[move.to.row][move.to.col] = fromId;
   tile.position = { ...move.to };
 
-  // Flip
   tile.side = tile.side === 'A' ? 'B' : 'A';
 }
 
@@ -119,7 +249,6 @@ function applyStrike(
   const targetId = s.board[move.target.row][move.target.col];
   if (!targetId) throw new Error(`No tile at strike target (${move.target.row},${move.target.col})`);
   removeTile(s, targetId);
-  // Striker does NOT flip or move
 }
 
 function applyCommand(
@@ -134,18 +263,15 @@ function applyCommand(
   const targetId = s.board[move.target.row][move.target.col];
   if (!targetId) throw new Error(`No tile at command target`);
 
-  // Capture at destination
   const destId = s.board[move.targetTo.row][move.targetTo.col];
   if (destId) {
     removeTile(s, destId);
   }
 
-  // Move commanded tile
   const tile = s.tiles.get(targetId)!;
   s.board[move.target.row][move.target.col] = null;
   s.board[move.targetTo.row][move.targetTo.col] = targetId;
   tile.position = { ...move.targetTo };
 
-  // Commanded tile flips. Commander does NOT flip.
   tile.side = tile.side === 'A' ? 'B' : 'A';
 }

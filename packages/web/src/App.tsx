@@ -14,12 +14,27 @@ export function App() {
   const isMobile = useIsMobile(660);
 
   const { state } = game;
+  const isSetup = state.status === 'setup';
 
   const commandTargetTile = useMemo(() => {
     if (!game.commandTarget) return null;
     const id = state.board[game.commandTarget.row][game.commandTarget.col];
     return id ? state.tiles.get(id) ?? null : null;
   }, [game.commandTarget, state]);
+
+  const boardEl = (
+    <Board
+      state={state}
+      selectedTile={game.selectedTile}
+      legalMoves={game.legalMoves}
+      onCellClick={game.onCellClick}
+      drawMode={game.drawMode}
+      placementTargets={game.placementTargets}
+      commandTarget={game.commandTarget}
+      commandDestinations={game.commandDestinations}
+      setupTargets={game.setupTargets}
+    />
+  );
 
   const p1Bag = (
     <BagPanel
@@ -74,6 +89,24 @@ export function App() {
         compact={isMobile}
       />
 
+      {/* Setup instruction banner */}
+      {game.setupLabel && (
+        <div style={{
+          padding: '0.5rem 1.2rem',
+          background: 'var(--surface)',
+          border: '1.5px solid var(--accent)',
+          borderRadius: 'var(--radius)',
+          fontSize: isMobile ? '0.75rem' : '0.85rem',
+          fontWeight: 600,
+          color: 'var(--accent)',
+          textAlign: 'center',
+          letterSpacing: '0.02em',
+          fontFamily: 'var(--font-body)',
+        }}>
+          {game.setupLabel}
+        </div>
+      )}
+
       {/* Desktop: bags flanking board */}
       {!isMobile && (
         <div style={{
@@ -83,59 +116,45 @@ export function App() {
           alignItems: 'flex-start',
           justifyContent: 'center',
         }}>
-          {p1Bag}
-          <Board
-            state={state}
-            selectedTile={game.selectedTile}
-            legalMoves={game.legalMoves}
-            onCellClick={game.onCellClick}
-            drawMode={game.drawMode}
-            placementTargets={game.placementTargets}
-            commandTarget={game.commandTarget}
-            commandDestinations={game.commandDestinations}
-          />
-          {p2Bag}
+          {!isSetup && p1Bag}
+          {boardEl}
+          {!isSetup && p2Bag}
         </div>
       )}
 
       {/* Mobile: board then bags below */}
       {isMobile && (
         <>
-          <Board
-            state={state}
-            selectedTile={game.selectedTile}
-            legalMoves={game.legalMoves}
-            onCellClick={game.onCellClick}
-            drawMode={game.drawMode}
-            placementTargets={game.placementTargets}
-            commandTarget={game.commandTarget}
-            commandDestinations={game.commandDestinations}
-          />
-          <div style={{
-            display: 'flex',
-            gap: '6px',
-            width: '100%',
-          }}>
-            {p1Bag}
-            {p2Bag}
-          </div>
+          {boardEl}
+          {!isSetup && (
+            <div style={{
+              display: 'flex',
+              gap: '6px',
+              width: '100%',
+            }}>
+              {p1Bag}
+              {p2Bag}
+            </div>
+          )}
         </>
       )}
 
-      <TileDetail
-        tile={game.selectedTileInstance}
-        viewingBagTile={game.viewingBagTile}
-        currentPlayer={state.currentPlayer}
-        bagSize={state.bags[state.currentPlayer].length}
-        canDraw={game.canDraw}
-        drawMode={game.drawMode}
-        selectedDrawTile={game.selectedDrawTile}
-        onStartDraw={game.startDraw}
-        commandTarget={game.commandTarget}
-        commandTargetTile={commandTargetTile}
-      />
+      {!isSetup && (
+        <TileDetail
+          tile={game.selectedTileInstance}
+          viewingBagTile={game.viewingBagTile}
+          currentPlayer={state.currentPlayer}
+          bagSize={state.bags[state.currentPlayer].length}
+          canDraw={game.canDraw}
+          drawMode={game.drawMode}
+          selectedDrawTile={game.selectedDrawTile}
+          onStartDraw={game.startDraw}
+          commandTarget={game.commandTarget}
+          commandTargetTile={commandTargetTile}
+        />
+      )}
 
-      {state.status !== 'active' && (
+      {state.status !== 'active' && state.status !== 'setup' && (
         <div style={{
           padding: '0.75rem 2rem',
           background: 'var(--accent)',

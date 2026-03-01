@@ -11,11 +11,13 @@ interface BoardProps {
   placementTargets: Coord[];
   commandTarget: Coord | null;
   commandDestinations: Coord[];
+  setupTargets: Coord[];
 }
 
 export function Board({
   state, selectedTile, legalMoves, onCellClick,
   drawMode, placementTargets, commandTarget, commandDestinations,
+  setupTargets,
 }: BoardProps) {
   const at = (r: number, c: number, coord: Coord | null) =>
     coord?.row === r && coord?.col === c;
@@ -54,6 +56,9 @@ export function Board({
   const isPlacementTarget = (r: number, c: number) =>
     drawMode && placementTargets.some(p => p.row === r && p.col === c);
 
+  const isSetupTarget = (r: number, c: number) =>
+    setupTargets.some(t => t.row === r && t.col === c);
+
   const rows = Array.from({ length: BOARD_SIZE }, (_, i) => i);
   const cols = Array.from({ length: BOARD_SIZE }, (_, i) => i);
 
@@ -81,9 +86,11 @@ export function Board({
           const legalTarget = isLegalTarget(r, c);
           const commandable = isCommandableTarget(r, c);
           const placeable = isPlacementTarget(r, c);
+          const setupCell = isSetupTarget(r, c);
 
           let bg: string;
-          if (selected) bg = 'var(--selected)';
+          if (setupCell) bg = 'var(--highlight)';
+          else if (selected) bg = 'var(--selected)';
           else if (cmdTarget) bg = 'rgba(196,162,74,0.3)';
           else if (cmdDest) bg = 'rgba(196,162,74,0.2)';
           else if (commandable) bg = 'rgba(196,162,74,0.15)';
@@ -152,6 +159,14 @@ export function Board({
                 <div style={{
                   width: '36%', height: '36%', borderRadius: '50%',
                   background: 'var(--accent)', opacity: 0.35,
+                  border: '2px solid var(--accent)',
+                }} />
+              )}
+
+              {!tile && setupCell && (
+                <div style={{
+                  width: '36%', height: '36%', borderRadius: '50%',
+                  background: 'var(--accent)', opacity: 0.4,
                   border: '2px solid var(--accent)',
                 }} />
               )}

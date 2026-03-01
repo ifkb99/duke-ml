@@ -186,7 +186,7 @@ export const MARSHALL: TileDefinition = {
   name: 'Marshall',
   sideA: {
     patterns: [
-      { type: 'jump', offsets: [B2R2, B2, F2R2] },
+      { type: 'jump', offsets: [F2L2, B2, F2R2] },
       { type: 'slide', offsets: [L, R] },
     ],
   },

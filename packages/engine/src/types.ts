@@ -35,7 +35,15 @@ export interface TileInstance {
 
 export type BoardGrid = (string | null)[][];
 
-export type GameStatus = 'active' | 'P1_wins' | 'P2_wins';
+export type GameStatus = 'setup' | 'active' | 'P1_wins' | 'P2_wins';
+
+export type SetupPhase =
+  | 'p1_duke'
+  | 'p1_footman1'
+  | 'p1_footman2'
+  | 'p2_duke'
+  | 'p2_footman1'
+  | 'p2_footman2';
 
 export interface GameState {
   board: BoardGrid;
@@ -47,6 +55,7 @@ export interface GameState {
   currentPlayer: Player;
   turnNumber: number;
   status: GameStatus;
+  setupPhase?: SetupPhase;
 }
 
 export type GameMove =
@@ -62,4 +71,5 @@ export interface SerializedGameState {
   currentPlayer: Player;
   turnNumber: number;
   status: GameStatus;
+  setupPhase?: SetupPhase;
 }
