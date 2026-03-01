@@ -3,6 +3,7 @@ import type {
 } from './types.js';
 import { TILE_REGISTRY } from './tiles.js';
 import { BOARD_SIZE } from './state.js';
+import { applyMoveRaw } from './game.js';
 
 function inBounds(coord: Coord): boolean {
   return coord.row >= 0 && coord.row < BOARD_SIZE
@@ -250,21 +251,114 @@ function generatePlacementMoves(state: GameState): GameMove[] {
   return moves;
 }
 
-export function generateAllMoves(state: GameState): GameMove[] {
+// --- Check detection ---
+
+function findDukePosition(state: GameState, player: Player): Coord | null {
+  for (const tile of state.tiles.values()) {
+    if (tile.owner === player && tile.defName === 'Duke') {
+      return tile.position;
+    }
+  }
+  return null;
+}
+
+/**
+ * Returns true if any tile owned by `byPlayer` can attack `square`
+ * via move, strike, or command in the given state.
+ */
+export function isSquareAttackedBy(
+  state: GameState, square: Coord, byPlayer: Player,
+): boolean {
+  for (const tile of state.tiles.values()) {
+    if (tile.owner !== byPlayer) continue;
+    const moves = generateTileMoves(state, tile);
+    for (const m of moves) {
+      if (m.type === 'move' && m.to.row === square.row && m.to.col === square.col) return true;
+      if (m.type === 'strike' && m.target.row === square.row && m.target.col === square.col) return true;
+      if (m.type === 'command' && m.targetTo.row === square.row && m.targetTo.col === square.col) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Returns true if a pseudo-legal move doesn't leave the mover's Duke in check.
+ */
+function isMoveLegal(state: GameState, move: GameMove): boolean {
+  const newState = applyMoveRaw(state, move);
+
+  // Captured enemy Duke — game is over, always legal
+  if (newState.status !== 'active') return true;
+
+  const mover = state.currentPlayer;
+  const opponent = mover === 'P1' ? 'P2' : 'P1';
+  const dukePos = findDukePosition(newState, mover);
+  if (!dukePos) return false;
+
+  return !isSquareAttackedBy(newState, dukePos, opponent);
+}
+
+// --- Pseudo-legal move generation (no check filtering) ---
+
+function generatePseudoLegalMoves(state: GameState): GameMove[] {
   if (state.status !== 'active') return [];
 
   const moves: GameMove[] = [];
   const player = state.currentPlayer;
 
-  // Tile moves
   for (const tile of state.tiles.values()) {
     if (tile.owner === player) {
       moves.push(...generateTileMoves(state, tile));
     }
   }
 
-  // Placement moves
   moves.push(...generatePlacementMoves(state));
 
   return moves;
+}
+
+// --- Public API ---
+
+/**
+ * Generate all legal moves for the current player, filtering out
+ * any move that would leave the player's own Duke in check.
+ */
+export function generateAllMoves(state: GameState): GameMove[] {
+  const pseudo = generatePseudoLegalMoves(state);
+  return pseudo.filter(m => isMoveLegal(state, m));
+}
+
+/**
+ * Returns true if the current player has at least one legal move.
+ * Short-circuits on the first legal move found (faster than generateAllMoves
+ * for checkmate detection).
+ */
+export function hasAnyLegalMove(state: GameState): boolean {
+  if (state.status !== 'active') return false;
+
+  const player = state.currentPlayer;
+  const opponent = player === 'P1' ? 'P2' : 'P1';
+
+  // Check tile moves
+  for (const tile of state.tiles.values()) {
+    if (tile.owner !== player) continue;
+    const tileMoves = generateTileMoves(state, tile);
+    for (const move of tileMoves) {
+      const newState = applyMoveRaw(state, move);
+      if (newState.status !== 'active') return true;
+      const dukePos = findDukePosition(newState, player);
+      if (dukePos && !isSquareAttackedBy(newState, dukePos, opponent)) return true;
+    }
+  }
+
+  // Check placement moves
+  const placements = generatePlacementMoves(state);
+  for (const move of placements) {
+    const newState = applyMoveRaw(state, move);
+    if (newState.status !== 'active') return true;
+    const dukePos = findDukePosition(newState, player);
+    if (dukePos && !isSquareAttackedBy(newState, dukePos, opponent)) return true;
+  }
+
+  return false;
 }

@@ -1,5 +1,6 @@
 import type { GameMove, GameState, TileInstance } from './types.js';
 import { cloneState } from './state.js';
+import { hasAnyLegalMove } from './moves.js';
 
 let nextInstanceCounter = 0;
 
@@ -8,7 +9,11 @@ export function resetInstanceCounter(val = 0): void {
   nextInstanceCounter = val;
 }
 
-export function applyMove(state: GameState, move: GameMove): GameState {
+/**
+ * Apply a move without checkmate detection.
+ * Used internally by move-legality filtering to avoid circular calls.
+ */
+export function applyMoveRaw(state: GameState, move: GameMove): GameState {
   const s = cloneState(state);
 
   switch (move.type) {
@@ -32,6 +37,23 @@ export function applyMove(state: GameState, move: GameMove): GameState {
   }
 
   return s;
+}
+
+/**
+ * Apply a move and detect checkmate/stalemate.
+ * If the resulting position leaves the new current player with no legal
+ * moves, the game ends as a loss for that player.
+ */
+export function applyMove(state: GameState, move: GameMove): GameState {
+  const newState = applyMoveRaw(state, move);
+
+  if (newState.status !== 'active') return newState;
+
+  if (!hasAnyLegalMove(newState)) {
+    newState.status = newState.currentPlayer === 'P1' ? 'P2_wins' : 'P1_wins';
+  }
+
+  return newState;
 }
 
 function removeTile(s: GameState, tileId: string): void {
