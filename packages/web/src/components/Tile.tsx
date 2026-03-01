@@ -22,70 +22,101 @@ const TILE_SYMBOLS: Record<string, string> = {
   Seer: 'Se',
 };
 
+const CORNER_SIZE = 9;
+const GOLD = 'var(--side-b)';
+
+function CornerTriangles() {
+  const s = CORNER_SIZE;
+  const base: React.CSSProperties = { position: 'absolute', width: 0, height: 0 };
+  return (
+    <>
+      <div style={{ ...base, top: 0, left: 0,
+        borderLeft: `${s}px solid ${GOLD}`, borderBottom: `${s}px solid transparent` }} />
+      <div style={{ ...base, top: 0, right: 0,
+        borderRight: `${s}px solid ${GOLD}`, borderBottom: `${s}px solid transparent` }} />
+      <div style={{ ...base, bottom: 0, left: 0,
+        borderLeft: `${s}px solid ${GOLD}`, borderTop: `${s}px solid transparent` }} />
+      <div style={{ ...base, bottom: 0, right: 0,
+        borderRight: `${s}px solid ${GOLD}`, borderTop: `${s}px solid transparent` }} />
+    </>
+  );
+}
+
 export function Tile({ tile }: TileProps) {
   const isP1 = tile.owner === 'P1';
   const symbol = TILE_SYMBOLS[tile.defName] ?? tile.defName.slice(0, 2);
   const isDuke = tile.defName === 'Duke';
   const isSideB = tile.side === 'B';
 
-  const gradientAngle = isSideB ? '325deg' : '145deg';
-  const p1Gradient = `linear-gradient(${gradientAngle}, #1e6cb8, #2584d8)`;
-  const p2Gradient = `linear-gradient(${gradientAngle}, #b83030, #d04545)`;
+  const bg = isP1
+    ? 'linear-gradient(155deg, #0c3460 0%, #164d8a 45%, #2066a8 100%)'
+    : 'linear-gradient(155deg, #3d0a18 0%, #6e1828 45%, #8e2838 100%)';
 
-  const edgeColor = isDuke
+  const innerGlow = isP1
+    ? 'rgba(80, 150, 220, 0.12)'
+    : 'rgba(200, 80, 100, 0.12)';
+
+  const borderColor = isDuke
     ? 'var(--accent)'
-    : isP1 ? 'rgba(91,155,213,0.6)' : 'rgba(212,85,85,0.6)';
+    : isP1 ? 'rgba(70,135,210,0.5)' : 'rgba(180,60,80,0.5)';
 
   return (
     <div style={{
-      width: '86%',
-      height: '86%',
+      width: '88%',
+      height: '88%',
       borderRadius: '5px',
-      background: isP1 ? p1Gradient : p2Gradient,
-      border: isDuke
-        ? '2px solid var(--accent)'
-        : `1.5px solid ${isP1 ? 'rgba(91,155,213,0.45)' : 'rgba(212,85,85,0.45)'}`,
+      background: bg,
+      border: `1.5px solid ${borderColor}`,
       boxShadow: isDuke
-        ? '0 0 8px rgba(201,168,76,0.25)'
-        : '0 1px 3px rgba(0,0,0,0.4)',
+        ? `0 0 10px rgba(196,162,74,0.3), inset 0 1px 1px ${innerGlow}, inset 0 -2px 4px rgba(0,0,0,0.3)`
+        : `0 2px 4px rgba(0,0,0,0.5), inset 0 1px 1px ${innerGlow}, inset 0 -2px 4px rgba(0,0,0,0.3)`,
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
-      color: '#fff',
+      gap: '1px',
+      color: '#ede8d8',
       fontFamily: 'var(--font-body)',
       fontWeight: 700,
-      fontSize: 'clamp(0.55rem, 2vw, 0.8rem)',
+      fontSize: 'clamp(0.55rem, 2vw, 0.82rem)',
       lineHeight: 1,
       userSelect: 'none',
-      textShadow: '0 1px 2px rgba(0,0,0,0.5)',
+      textShadow: '0 1px 3px rgba(0,0,0,0.6)',
       position: 'relative',
-      letterSpacing: '-0.01em',
       overflow: 'hidden',
+      letterSpacing: '0.01em',
     }}>
-      {/* Edge bar: bottom for Side A, top for Side B */}
+      {/* Inner frame */}
       <div style={{
         position: 'absolute',
-        left: '20%',
-        right: '20%',
-        height: '2.5px',
-        borderRadius: '1px',
-        background: edgeColor,
-        ...(isSideB ? { top: '1px' } : { bottom: '1px' }),
+        inset: '2.5px',
+        borderRadius: '3px',
+        border: `1px solid ${isP1 ? 'rgba(90,160,230,0.1)' : 'rgba(200,80,100,0.1)'}`,
+        pointerEvents: 'none',
       }} />
 
-      {/* Corner fold for Side B — a small triangle suggesting the tile is flipped */}
-      {isSideB && (
-        <div style={{
-          position: 'absolute',
-          top: 0,
-          right: 0,
-          width: 0,
-          height: 0,
-          borderStyle: 'solid',
-          borderWidth: '0 10px 10px 0',
-          borderColor: `transparent ${isP1 ? 'rgba(130,190,255,0.35)' : 'rgba(255,140,140,0.35)'} transparent transparent`,
-        }} />
+      {/* Side B: gold corner triangles */}
+      {isSideB && <CornerTriangles />}
+
+      {/* Duke crown */}
+      {isDuke && (
+        <svg
+          viewBox="0 0 24 14"
+          style={{
+            width: 'clamp(10px, 3.2vw, 16px)',
+            height: 'auto',
+            marginBottom: '-1px',
+            filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.4))',
+          }}
+        >
+          <path
+            d="M1 13L4 4L8 9L12 2L16 9L20 4L23 13Z"
+            fill="var(--accent)"
+          />
+          <circle cx="4" cy="3" r="1.5" fill="var(--accent)" />
+          <circle cx="12" cy="1" r="1.5" fill="var(--accent)" />
+          <circle cx="20" cy="3" r="1.5" fill="var(--accent)" />
+        </svg>
       )}
 
       <span>{symbol}</span>

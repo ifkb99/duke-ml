@@ -38,8 +38,8 @@ export function BagPanel({
   const color = isP1 ? 'var(--p1-color)' : 'var(--p2-color)';
   const label = isP1 ? 'Light' : 'Dark';
   const gradient = isP1
-    ? 'linear-gradient(135deg, #1a5ca0, #2778c4)'
-    : 'linear-gradient(135deg, #a03030, #c44040)';
+    ? 'linear-gradient(155deg, #0c3460, #164d8a, #2066a8)'
+    : 'linear-gradient(155deg, #3d0a18, #6e1828, #8e2838)';
 
   return (
     <div style={{
@@ -129,11 +129,12 @@ export function BagPanel({
                 height: '18px',
                 borderRadius: '4px',
                 background: gradient,
-                color: '#fff',
+                color: '#ede8d8',
                 fontSize: '0.55rem',
                 fontWeight: 700,
                 flexShrink: 0,
                 letterSpacing: '-0.02em',
+                boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.1), inset 0 -1px 2px rgba(0,0,0,0.25)',
               }}>
                 {abbr}
               </span>

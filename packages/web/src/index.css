@@ -5,20 +5,21 @@
 }
 
 :root {
-  --bg: #0c0c18;
-  --surface: #141424;
-  --surface-2: #1c1c32;
-  --surface-3: #252540;
-  --accent: #c9a84c;
-  --accent-dim: rgba(201, 168, 76, 0.15);
-  --text: #e8e6e1;
-  --text-muted: #6e7086;
-  --p1-color: #5b9bd5;
-  --p2-color: #d45555;
-  --board-light: #22223a;
-  --board-dark: #181830;
-  --highlight: rgba(201, 168, 76, 0.3);
-  --selected: rgba(91, 155, 213, 0.35);
+  --bg: #0d0b14;
+  --surface: #141220;
+  --surface-2: #1c1a2a;
+  --surface-3: #262438;
+  --accent: #c4a24a;
+  --accent-dim: rgba(196, 162, 74, 0.15);
+  --text: #e8e4d8;
+  --text-muted: #6a687e;
+  --p1-color: #5a96cc;
+  --p2-color: #c4586a;
+  --side-b: #c4a24a;
+  --board-light: #1c1a30;
+  --board-dark: #13111e;
+  --highlight: rgba(196, 162, 74, 0.28);
+  --selected: rgba(90, 150, 204, 0.35);
 
   --font-display: 'Cinzel', serif;
   --font-body: 'Outfit', system-ui, sans-serif;
@@ -37,8 +38,8 @@ body {
   font-weight: 400;
   background: var(--bg);
   background-image:
-    radial-gradient(ellipse at 20% 0%, rgba(201, 168, 76, 0.04) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 100%, rgba(91, 155, 213, 0.03) 0%, transparent 50%);
+    radial-gradient(ellipse at 25% 0%, rgba(196, 162, 74, 0.035) 0%, transparent 50%),
+    radial-gradient(ellipse at 75% 100%, rgba(90, 150, 204, 0.025) 0%, transparent 50%);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -76,7 +77,7 @@ select:hover {
 }
 
 ::selection {
-  background: rgba(201, 168, 76, 0.3);
+  background: rgba(196, 162, 74, 0.3);
   color: var(--text);
 }
 

@@ -11,13 +11,13 @@ const GRID_SIZE = 7;
 const CENTER = 3;
 
 const MOVE_COLORS: Record<MoveType | 'self', string> = {
-  step:       '#5b9bd5',
-  slide:      '#a86dd4',
-  jump:       '#5dbf68',
-  jump_slide: '#3cc4d1',
-  strike:     '#d45555',
-  command:    '#c9a84c',
-  self:       '#3a3a52',
+  step:       '#5a96cc',
+  slide:      '#8870b0',
+  jump:       '#50a868',
+  jump_slide: '#40aab0',
+  strike:     '#c4586a',
+  command:    '#c4a24a',
+  self:       '#302e40',
 };
 
 const MOVE_LABELS: Record<MoveType, string> = {
@@ -108,7 +108,7 @@ export function MovesetGrid({ side, label, flipVertical = false, isCurrent }: Mo
           ? '1.5px solid var(--surface-3)'
           : '1.5px solid transparent',
       background: isCurrent
-        ? 'rgba(201,168,76,0.05)'
+        ? 'rgba(196,162,74,0.05)'
         : 'transparent',
       opacity: isCurrent === false ? 0.5 : 1,
       transition: 'opacity 0.2s, border-color 0.2s, background 0.2s',

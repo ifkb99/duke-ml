@@ -142,7 +142,7 @@ export function App() {
           borderRadius: 'var(--radius-lg)',
           fontWeight: 700,
           fontSize: '1.1rem',
-          color: '#0c0c18',
+          color: '#0d0b14',
           letterSpacing: '0.04em',
           fontFamily: 'var(--font-display)',
         }}>

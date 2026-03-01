@@ -45,47 +45,40 @@ function TileName({ name, color }: { name: string; color: string }) {
   );
 }
 
-/** Side indicator — mirrors the physical tile metaphor (edge bar + corner fold for B) */
+/** Side indicator badge — miniature of the board tile design */
 function SideIndicator({ side, color }: { side: 'A' | 'B'; color: string }) {
   const isSideB = side === 'B';
+  const s = 5;
+  const purple = 'var(--side-b)';
+  const triBase: React.CSSProperties = { position: 'absolute', width: 0, height: 0 };
   return (
     <span style={{
       display: 'inline-flex',
       alignItems: 'center',
       justifyContent: 'center',
-      width: '22px',
-      height: '22px',
+      width: '24px',
+      height: '24px',
       borderRadius: '4px',
       background: color,
       position: 'relative',
       overflow: 'hidden',
-      fontSize: '0.55rem',
+      fontSize: '0.6rem',
       fontWeight: 700,
-      color: '#fff',
+      color: '#ede8d8',
       letterSpacing: 0,
+      boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.1), inset 0 -1px 2px rgba(0,0,0,0.3)',
     }}>
-      {/* Edge bar */}
-      <span style={{
-        position: 'absolute',
-        left: '25%',
-        right: '25%',
-        height: '2px',
-        borderRadius: '1px',
-        background: 'rgba(255,255,255,0.5)',
-        ...(isSideB ? { top: '1px' } : { bottom: '1px' }),
-      }} />
-      {/* Corner fold for B */}
       {isSideB && (
-        <span style={{
-          position: 'absolute',
-          top: 0,
-          right: 0,
-          width: 0,
-          height: 0,
-          borderStyle: 'solid',
-          borderWidth: '0 7px 7px 0',
-          borderColor: 'transparent rgba(255,255,255,0.3) transparent transparent',
-        }} />
+        <>
+          <span style={{ ...triBase, top: 0, left: 0,
+            borderLeft: `${s}px solid ${purple}`, borderBottom: `${s}px solid transparent` }} />
+          <span style={{ ...triBase, top: 0, right: 0,
+            borderRight: `${s}px solid ${purple}`, borderBottom: `${s}px solid transparent` }} />
+          <span style={{ ...triBase, bottom: 0, left: 0,
+            borderLeft: `${s}px solid ${purple}`, borderTop: `${s}px solid transparent` }} />
+          <span style={{ ...triBase, bottom: 0, right: 0,
+            borderRight: `${s}px solid ${purple}`, borderTop: `${s}px solid transparent` }} />
+        </>
       )}
       {side}
     </span>
@@ -189,8 +182,8 @@ export function TileDetail({
     const isP1 = tile.owner === 'P1';
     const ownerColor = isP1 ? 'var(--p1-color)' : 'var(--p2-color)';
     const gradient = isP1
-      ? 'linear-gradient(135deg, #1e6cb8, #2584d8)'
-      : 'linear-gradient(135deg, #b83030, #d04545)';
+      ? 'linear-gradient(155deg, #0c3460, #164d8a, #2066a8)'
+      : 'linear-gradient(155deg, #3d0a18, #6e1828, #8e2838)';
     const isOwnDuke = tile.owner === currentPlayer && tile.defName === 'Duke';
 
     return (

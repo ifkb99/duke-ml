@@ -62,13 +62,13 @@ export function Board({
       display: 'grid',
       gridTemplateColumns: `repeat(${BOARD_SIZE}, 1fr)`,
       gap: '1.5px',
-      background: 'rgba(201,168,76,0.12)',
+      background: 'rgba(196,162,74,0.1)',
       padding: '3px',
       borderRadius: 'var(--radius-lg)',
       width: '100%',
       maxWidth: '460px',
       aspectRatio: '1',
-      boxShadow: '0 2px 20px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(201,168,76,0.08)',
+      boxShadow: '0 2px 20px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(196,162,74,0.08)',
     }}>
       {rows.map(r =>
         cols.map(c => {
@@ -84,9 +84,9 @@ export function Board({
 
           let bg: string;
           if (selected) bg = 'var(--selected)';
-          else if (cmdTarget) bg = 'rgba(201,168,76,0.3)';
-          else if (cmdDest) bg = 'rgba(201,168,76,0.2)';
-          else if (commandable) bg = 'rgba(201,168,76,0.15)';
+          else if (cmdTarget) bg = 'rgba(196,162,74,0.3)';
+          else if (cmdDest) bg = 'rgba(196,162,74,0.2)';
+          else if (commandable) bg = 'rgba(196,162,74,0.15)';
           else if (legalTarget) bg = 'var(--highlight)';
           else if (placeable) bg = 'var(--accent-dim)';
           else bg = dark ? 'var(--board-dark)' : 'var(--board-light)';
@@ -136,7 +136,7 @@ export function Board({
                 <div style={{
                   position: 'absolute', inset: '2px', borderRadius: '5px',
                   border: '2px solid var(--accent)',
-                  boxShadow: '0 0 8px rgba(201,168,76,0.4)',
+                  boxShadow: '0 0 8px rgba(196,162,74,0.4)',
                   pointerEvents: 'none',
                 }} />
               )}
