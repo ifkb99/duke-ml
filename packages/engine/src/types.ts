@@ -1,8 +1,8 @@
 // (0,0) is top-left. Row 0 is Player 1's back row, Row 5 is Player 2's.
 export type Coord = { row: number; col: number };
 
-// Movement offsets defined from Player 1's perspective.
-// When generating moves for Player 2, negate the row component.
+// Movement offsets defined with negative dRow = upward (toward row 0, toward P1's side).
+// P2 (at row 5, facing P1) uses offsets directly. P1 (at row 0, facing P2) has dRow negated.
 export type Offset = { dRow: number; dCol: number };
 
 export type MoveType = 'step' | 'slide' | 'jump' | 'jump_slide' | 'strike' | 'command';

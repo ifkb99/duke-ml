@@ -277,7 +277,7 @@ export const RANGER: TileDefinition = {
 
 // --- Registry ---
 
-const ALL_TILES: TileDefinition[] = [
+export const ALL_TILES: TileDefinition[] = [
   DUKE, FOOTMAN, PRIEST, CHAMPION, ASSASSIN, BOWMAN,
   DRAGOON, PIKEMAN, GENERAL, MARSHALL, LONGBOWMAN, KNIGHT,
   SEER, WIZARD, RANGER,

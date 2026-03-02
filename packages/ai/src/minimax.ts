@@ -50,7 +50,7 @@ function minimax(
       const child = applyMove(state, move);
       value = Math.min(value, minimax(child, depth - 1, alpha, beta, true, stats, movesAtStateDict));
       beta = Math.min(beta, value);
-      if (alpha >= beta) return value;
+      if (alpha >= beta) return value; // does this exit the loop too early?
     });
     return value;
   }
@@ -61,7 +61,9 @@ function minimax(
  * Evaluates from P1's perspective: P1 maximizes, P2 minimizes.
  */
 export function findBestMove(state: GameState, depth = 4): MinimaxResult {
+  // memoize moves at state
   const movesAtStateDict = new Map<SerializedGameState, GameMove[]>();
+  // TODO: ensure that draw move "reward" is sum(bag_piece_scores) / n_pieces_in_bag
   const moves = generateAllMoves(state);
   movesAtStateDict.set(serialize(state), moves);
   if (moves.length === 0) return { move: null, score: 0, nodesSearched: 0 };

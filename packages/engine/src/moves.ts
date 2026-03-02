@@ -10,8 +10,11 @@ function inBounds(coord: Coord): boolean {
       && coord.col >= 0 && coord.col < BOARD_SIZE;
 }
 
+// Tile offsets are defined with negative dRow = upward (toward row 0 = toward P1's side).
+// P2 sits at row 5 facing upward toward P1 → uses offsets directly (F = {dRow:-1} = correct forward).
+// P1 sits at row 0 facing downward toward P2 → dRow must be negated (F = {dRow:+1} = correct forward).
 function adjustOffset(offset: Offset, player: Player): Offset {
-  return player === 'P1' ? offset : { dRow: -offset.dRow, dCol: offset.dCol };
+  return player === 'P2' ? offset : { dRow: -offset.dRow, dCol: offset.dCol };
 }
 
 function addOffset(coord: Coord, offset: Offset): Coord {
@@ -48,7 +51,7 @@ function gcd(a: number, b: number): number {
 function isStepPathClear(state: GameState, from: Coord, adjusted: Offset): boolean {
   const g = gcd(Math.abs(adjusted.dRow), Math.abs(adjusted.dCol));
   if (g <= 1) return true;
-  const unitDr = adjusted.dRow / g;
+  const unitDr = adjusted.dRow / g; // TODO: is this whole number? maybe divides wrong. footman cannot step two squares forward.
   const unitDc = adjusted.dCol / g;
   for (let i = 1; i < g; i++) {
     const intermediate: Coord = { row: from.row + unitDr * i, col: from.col + unitDc * i };
