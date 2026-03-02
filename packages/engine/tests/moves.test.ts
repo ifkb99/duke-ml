@@ -210,10 +210,10 @@ describe('Jump move generation', () => {
 describe('Strike move generation', () => {
   it('generates strike only on enemy tiles', () => {
     const state = makeState();
-    // Longbowman side B has strikes at F2, F3
+    // Longbowman side B has strikes at F2, F3 (P1's forward = toward row 5)
     placeTile(state, {
       id: 'P1-Longbowman-1', defName: 'Longbowman', owner: 'P1', side: 'B',
-      position: { row: 4, col: 3 },
+      position: { row: 2, col: 3 },
     });
     placeTile(state, {
       id: 'P1-Duke', defName: 'Duke', owner: 'P1', side: 'A',
@@ -221,16 +221,16 @@ describe('Strike move generation', () => {
     });
     placeTile(state, {
       id: 'P2-Footman-1', defName: 'Footman', owner: 'P2', side: 'A',
-      position: { row: 2, col: 3 },
+      position: { row: 4, col: 3 },
     });
 
     const moves = generateAllMoves(state);
     const strikes = moves.filter(m => m.type === 'strike');
 
-    // Longbowman B: strike F2 ({row:2,col:3}) and F3 ({row:1,col:3})
+    // Longbowman B: strike F2 ({row:4,col:3}) and F3 ({row:5,col:3})
     // Only F2 has an enemy, F3 is empty → 1 strike
     expect(strikes).toHaveLength(1);
-    expect(strikes[0].type === 'strike' && strikes[0].target.row).toBe(2);
+    expect(strikes[0].type === 'strike' && strikes[0].target.row).toBe(4);
   });
 
   it('no strikes when no enemies in range', () => {
@@ -368,10 +368,10 @@ describe('isSquareAttackedBy', () => {
 
   it('detects strike attack', () => {
     const state = makeState();
-    // Longbowman side B strikes F2, F3
+    // Longbowman side B strikes F2, F3 (P2's forward = toward row 0)
     placeTile(state, {
       id: 'P2-Longbowman-1', defName: 'Longbowman', owner: 'P2', side: 'B',
-      position: { row: 1, col: 3 },
+      position: { row: 5, col: 3 },
     });
     // Put a P1 piece at the target so strike is generated
     placeTile(state, {
@@ -379,7 +379,7 @@ describe('isSquareAttackedBy', () => {
       position: { row: 3, col: 3 },
     });
 
-    // P2 Longbowman side B: F for P2 = dRow+1. F2 = (3,3), F3 = (4,3)
+    // P2 Longbowman side B: F for P2 = dRow-1. F2 from (5,3) = (3,3)
     expect(isSquareAttackedBy(state, { row: 3, col: 3 }, 'P2')).toBe(true);
   });
 
