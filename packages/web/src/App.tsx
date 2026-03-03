@@ -9,7 +9,7 @@ import { useIsMobile } from './hooks/useIsMobile.js';
 export type GameMode = 'hotseat' | 'vs-random' | 'vs-minimax';
 
 export function App() {
-  const [mode, setMode] = useState<GameMode>('hotseat');
+  const [mode, setMode] = useState<GameMode>('vs-minimax');
   const game = useGame(mode);
   const isMobile = useIsMobile(660);
 
