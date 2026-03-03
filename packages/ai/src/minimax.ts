@@ -54,7 +54,7 @@ function minimax(
  * Find the best move using minimax with alpha-beta pruning.
  * Evaluates from P1's perspective: P1 maximizes, P2 minimizes.
  */
-export function findBestMove(state: GameState, depth = 4): MinimaxResult {
+export function findBestMove(state: GameState, depth = 6): MinimaxResult {
   // TODO: ensure that draw move "reward" is sum(bag_piece_scores) / n_pieces_in_bag
   const moves = generateAllMoves(state);
   if (moves.length === 0) return { move: null, score: 0, nodesSearched: 0 };
