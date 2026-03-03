@@ -172,10 +172,7 @@ function generateJumpSlideMoves( // TODO: cannot land on closest square
   const moves: GameMove[] = [];
   for (const dir of pattern.offsets) {
     const adjusted = adjustOffset(dir, player);
-    const target = addOffset(from, adjusted);
-    if (!inBounds(target)) continue;
-
-    let current = target;
+    let current = from;
     while (true) {
       current = addOffset(current, adjusted);
       if (!inBounds(current)) break;
