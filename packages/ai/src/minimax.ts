@@ -42,7 +42,20 @@ function makeZobristKeys() {
 
   const turnKey = rand32(); // XOR when currentPlayer === 'P2'
 
-  return { board, turnKey, tileIndex };
+  // Bag keys: bagKeys[tileNameIdx][playerIdx][count]
+  // Max 3 copies of any tile in bag (Footman x3, Pikeman x3)
+  const bagKeys: number[][][] = [];
+  for (let t = 0; t < tileNames.length; t++) {
+    bagKeys[t] = [];
+    for (let p = 0; p < 2; p++) {
+      bagKeys[t][p] = [];
+      for (let c = 0; c <= 3; c++) {
+        bagKeys[t][p][c] = rand32();
+      }
+    }
+  }
+
+  return { board, turnKey, tileIndex, bagKeys };
 }
 
 const ZOBRIST = makeZobristKeys();
@@ -57,6 +70,20 @@ function hashState(state: GameState): number {
     h ^= ZOBRIST.board[tile.position.row][tile.position.col][ti][ownerBit * 2 + sideBit];
   }
   if (state.currentPlayer === 'P2') h ^= ZOBRIST.turnKey;
+
+  // Hash bag contents
+  const bagCounts: [Map<string, number>, Map<string, number>] = [new Map(), new Map()];
+  for (const name of state.bags.P1) {
+    bagCounts[0].set(name, (bagCounts[0].get(name) ?? 0) + 1);
+  }
+  for (const name of state.bags.P2) {
+    bagCounts[1].set(name, (bagCounts[1].get(name) ?? 0) + 1);
+  }
+  for (const [name, ti] of ZOBRIST.tileIndex) {
+    h ^= ZOBRIST.bagKeys[ti][0][bagCounts[0].get(name) ?? 0];
+    h ^= ZOBRIST.bagKeys[ti][1][bagCounts[1].get(name) ?? 0];
+  }
+
   return h;
 }
 
@@ -139,7 +166,100 @@ function moveScore(move: GameMove, state: GameState): number {
 }
 
 // ---------------------------------------------------------------------------
-// Minimax with alpha-beta pruning + transposition table
+// Expectimax: split moves into board moves and draw outcomes
+// ---------------------------------------------------------------------------
+
+interface DrawOutcome {
+  tileName: string;
+  probability: number;
+  placements: GameMove[];
+}
+
+function splitMoves(
+  moves: GameMove[],
+  state: GameState,
+): { boardMoves: GameMove[]; drawOutcomes: DrawOutcome[] } {
+  const boardMoves: GameMove[] = [];
+  const placeByTile = new Map<string, GameMove[]>();
+
+  for (const move of moves) {
+    if (move.type === 'place') {
+      const list = placeByTile.get(move.tileName);
+      if (list) list.push(move);
+      else placeByTile.set(move.tileName, [move]);
+    } else {
+      boardMoves.push(move);
+    }
+  }
+
+  if (placeByTile.size === 0) return { boardMoves, drawOutcomes: [] };
+
+  const bag = state.bags[state.currentPlayer];
+  const bagTotal = bag.length;
+  if (bagTotal === 0) return { boardMoves, drawOutcomes: [] };
+
+  const bagCounts = new Map<string, number>();
+  for (const name of bag) {
+    bagCounts.set(name, (bagCounts.get(name) ?? 0) + 1);
+  }
+
+  const drawOutcomes: DrawOutcome[] = [];
+  for (const [tileName, placements] of placeByTile) {
+    const count = bagCounts.get(tileName) ?? 0;
+    if (count > 0) {
+      drawOutcomes.push({ tileName, probability: count / bagTotal, placements });
+    }
+  }
+
+  return { boardMoves, drawOutcomes };
+}
+
+// ---------------------------------------------------------------------------
+// Evaluate a chance node: weighted average over random tile draws,
+// with player choosing best placement position for each drawn tile.
+// ---------------------------------------------------------------------------
+
+function evaluateChanceNode(
+  drawOutcomes: DrawOutcome[],
+  state: GameState,
+  depth: number,
+  alpha: number,
+  beta: number,
+  maximizing: boolean,
+  stats: { nodes: number },
+): number {
+  let expectedValue = 0;
+
+  for (const { probability, placements } of drawOutcomes) {
+    let bestPlacementScore = maximizing ? -Infinity : Infinity;
+
+    // Player chooses where to place — this is a deterministic max/min decision.
+    // Use local copies of alpha/beta for pruning within placements.
+    let innerAlpha = alpha;
+    let innerBeta = beta;
+
+    for (const move of placements) {
+      const child = applyMove(state, move);
+      const score = minimax(child, depth - 1, innerAlpha, innerBeta, !maximizing, stats);
+
+      if (maximizing) {
+        bestPlacementScore = Math.max(bestPlacementScore, score);
+        innerAlpha = Math.max(innerAlpha, bestPlacementScore);
+      } else {
+        bestPlacementScore = Math.min(bestPlacementScore, score);
+        innerBeta = Math.min(innerBeta, bestPlacementScore);
+      }
+      if (innerAlpha >= innerBeta) break;
+    }
+
+    expectedValue += probability * bestPlacementScore;
+  }
+
+  return expectedValue;
+}
+
+// ---------------------------------------------------------------------------
+// Minimax with alpha-beta pruning + transposition table + expectimax draws
 // ---------------------------------------------------------------------------
 
 function minimax(
@@ -162,33 +282,54 @@ function minimax(
   const ttHit = ttProbe(hash, depth, alpha, beta);
   if (ttHit !== null) return ttHit;
 
-  const moves = orderMoves(generateAllMoves(state), state);
+  const allMoves = generateAllMoves(state);
 
-  if (moves.length === 0) {
+  if (allMoves.length === 0) {
     // No legal moves = loss for current player
     return maximizing ? -99_999 : 99_999;
   }
+
+  const { boardMoves, drawOutcomes } = splitMoves(allMoves, state);
+  const orderedBoardMoves = orderMoves(boardMoves, state);
 
   let bestScore: number;
   let flag: number;
 
   if (maximizing) {
     bestScore = -Infinity;
-    for (const move of moves) {
+
+    // Evaluate board moves first (captures first → tight bounds early)
+    for (const move of orderedBoardMoves) {
       const child = applyMove(state, move);
       bestScore = Math.max(bestScore, minimax(child, depth - 1, alpha, beta, false, stats));
       alpha = Math.max(alpha, bestScore);
       if (alpha >= beta) break;
     }
+
+    // Evaluate draw as a single chance node competing with board moves
+    if (drawOutcomes.length > 0 && alpha < beta) {
+      const drawScore = evaluateChanceNode(drawOutcomes, state, depth, alpha, beta, true, stats);
+      bestScore = Math.max(bestScore, drawScore);
+      alpha = Math.max(alpha, bestScore);
+    }
+
     flag = bestScore >= beta ? TT_LOWER : (bestScore <= alpha ? TT_UPPER : TT_EXACT);
   } else {
     bestScore = Infinity;
-    for (const move of moves) {
+
+    for (const move of orderedBoardMoves) {
       const child = applyMove(state, move);
       bestScore = Math.min(bestScore, minimax(child, depth - 1, alpha, beta, true, stats));
       beta = Math.min(beta, bestScore);
       if (alpha >= beta) break;
     }
+
+    if (drawOutcomes.length > 0 && alpha < beta) {
+      const drawScore = evaluateChanceNode(drawOutcomes, state, depth, alpha, beta, false, stats);
+      bestScore = Math.min(bestScore, drawScore);
+      beta = Math.min(beta, bestScore);
+    }
+
     flag = bestScore <= alpha ? TT_UPPER : (bestScore >= beta ? TT_LOWER : TT_EXACT);
   }
 
@@ -199,21 +340,25 @@ function minimax(
 /**
  * Find the best move using minimax with alpha-beta pruning.
  * Evaluates from P1's perspective: P1 maximizes, P2 minimizes.
+ * Draw moves are treated as chance nodes (expectimax).
  */
 export function findBestMove(state: GameState, depth = 6): MinimaxResult {
-  // TODO: ensure that draw move "reward" is sum(bag_piece_scores) / n_pieces_in_bag
-  const moves = orderMoves(generateAllMoves(state), state);
-  if (moves.length === 0) return { move: null, score: 0, nodesSearched: 0 };
+  const allMoves = generateAllMoves(state);
+  if (allMoves.length === 0) return { move: null, score: 0, nodesSearched: 0 };
 
   const maximizing = state.currentPlayer === 'P1';
   const stats = { nodes: 0 };
 
-  let bestMove: GameMove = moves[0];
+  const { boardMoves, drawOutcomes } = splitMoves(allMoves, state);
+  const orderedBoardMoves = orderMoves(boardMoves, state);
+
+  let bestMove: GameMove = allMoves[0];
   let bestScore = maximizing ? -Infinity : Infinity;
   let alpha = -Infinity;
   let beta = Infinity;
 
-  for (const move of moves) {
+  // Evaluate board moves with standard alpha-beta
+  for (const move of orderedBoardMoves) {
     const child = applyMove(state, move);
     const score = minimax(child, depth - 1, alpha, beta, !maximizing, stats);
 
@@ -229,6 +374,37 @@ export function findBestMove(state: GameState, depth = 6): MinimaxResult {
         bestMove = move;
       }
       beta = Math.min(beta, bestScore);
+    }
+  }
+
+  // Evaluate draw as a single chance node
+  if (drawOutcomes.length > 0) {
+    const drawScore = evaluateChanceNode(drawOutcomes, state, depth, alpha, beta, maximizing, stats);
+    const drawIsBetter = maximizing ? drawScore > bestScore : drawScore < bestScore;
+
+    if (drawIsBetter) {
+      bestScore = drawScore;
+
+      // Drawing is best action — simulate the real game: randomly pick a tile
+      // from the bag, then return the best placement for that tile.
+      const bag = state.bags[state.currentPlayer];
+      const randomTile = bag[Math.floor(Math.random() * bag.length)];
+      const tilePlacements = drawOutcomes.find(d => d.tileName === randomTile)?.placements ?? [];
+
+      let bestPlacement: GameMove | null = null;
+      let bestPlacementScore = maximizing ? -Infinity : Infinity;
+
+      for (const move of tilePlacements) {
+        const child = applyMove(state, move);
+        const score = minimax(child, depth - 1, -Infinity, Infinity, !maximizing, stats);
+
+        if (maximizing ? score > bestPlacementScore : score < bestPlacementScore) {
+          bestPlacementScore = score;
+          bestPlacement = move;
+        }
+      }
+
+      if (bestPlacement) bestMove = bestPlacement;
     }
   }
 
