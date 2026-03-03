@@ -175,7 +175,6 @@ function generateJumpSlideMoves(
     let current = from;
     while (true) {
       current = addOffset(current, adjusted);
-      console.log('current js', current);
       if (!inBounds(current)) break;
       const occupant = tileAt(state, current);
       if (occupant && isFriendly(occupant, player)) continue;
