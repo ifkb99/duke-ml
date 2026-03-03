@@ -159,7 +159,7 @@ export const PIKEMAN: TileDefinition = {
   },
   sideB: {
     patterns: [
-      { type: 'step', offsets: [F, F2, B] },
+      { type: 'step', offsets: [F, B, B2] },
       { type: 'strike', offsets: [F2L, F2R] },
     ],
   },

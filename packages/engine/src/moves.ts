@@ -51,7 +51,7 @@ function gcd(a: number, b: number): number {
 function isStepPathClear(state: GameState, from: Coord, adjusted: Offset): boolean {
   const g = gcd(Math.abs(adjusted.dRow), Math.abs(adjusted.dCol));
   if (g <= 1) return true;
-  const unitDr = adjusted.dRow / g; // TODO: is this whole number? maybe divides wrong. footman cannot step two squares forward.
+  const unitDr = adjusted.dRow / g;
   const unitDc = adjusted.dCol / g;
   for (let i = 1; i < g; i++) {
     const intermediate: Coord = { row: from.row + unitDr * i, col: from.col + unitDc * i };
@@ -163,11 +163,10 @@ function generateCommandMoves(
 }
 
 /**
- * Jump-slide: jump over the first square in the direction (ignoring its
- * contents), then slide from the second square onward.
- * The piece can land on the 2nd, 3rd, ... square until blocked.
+ * Jump-slide: same as slide, but allowed to jump over any piece in the way.
+ * The piece can land on the 1st, 2nd, 3rd, ... square until the edge of the board
  */
-function generateJumpSlideMoves(
+function generateJumpSlideMoves( // TODO: cannot land on closest square
   state: GameState, from: Coord, pattern: MovePattern, player: Player,
 ): GameMove[] {
   const moves: GameMove[] = [];
