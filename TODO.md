@@ -2,3 +2,4 @@
 - check if minimax memoized properly
 - consider how minimax scores draw, use score of remaining pieces in superposition to give draw score
 - allow minimax to play from either side. new game randomizes who is on what side
+- something is up with jump slide, cant move to closest space
