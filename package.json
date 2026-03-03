@@ -5,7 +5,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
+    "build": "npm run build --workspace=packages/engine && npm run build --workspace=packages/ai && npm run build --workspace=packages/web",
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspace=packages/web"
   }
