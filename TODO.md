@@ -1,7 +1,7 @@
 - check if minimax memoized properly
 - consider how minimax scores draw, use score of remaining pieces in superposition to give draw score. how to make this work down the minimax tree if does not know what will draw?
 - allow minimax to play from either side. new game randomizes who is on what side
-- something is up with jump slide, cant move to closest space or jump over more than one piece
 - add check indicator
 - show enemy moves on board when piece is clicked
 - button to show all friendly moves in green, enemy in red
+- cursor keeps crashing. determine if is from the program or cursor
