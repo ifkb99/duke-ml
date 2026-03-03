@@ -41,7 +41,7 @@ function minimax(
       const child = applyMove(state, move);
       value = Math.max(value, minimax(child, depth - 1, alpha, beta, false, stats, movesAtStateDict));
       alpha = Math.max(alpha, value);
-      if (alpha >= beta) return value;
+      if (alpha >= beta) value = alpha;
     });
     return value;
   } else {
@@ -50,7 +50,7 @@ function minimax(
       const child = applyMove(state, move);
       value = Math.min(value, minimax(child, depth - 1, alpha, beta, true, stats, movesAtStateDict));
       beta = Math.min(beta, value);
-      if (alpha >= beta) return value; // does this exit the loop too early?
+      if (alpha >= beta) value = beta;
     });
     return value;
   }
