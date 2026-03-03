@@ -1,5 +1,5 @@
-import type { GameMove, GameState, SerializedGameState } from '@the-duke/engine';
-import { generateAllMoves, applyMove, serialize } from '@the-duke/engine';
+import type { GameMove, GameState } from '@the-duke/engine';
+import { generateAllMoves, applyMove } from '@the-duke/engine';
 import { evaluate } from './evaluate.js';
 
 export interface MinimaxResult {
@@ -15,7 +15,6 @@ function minimax(
   beta: number,
   maximizing: boolean,
   stats: { nodes: number },
-  movesAtStateDict: Map<SerializedGameState, GameMove[]>,
 ): number {
   stats.nodes++;
 
@@ -23,12 +22,7 @@ function minimax(
     return evaluate(state);
   }
 
-  const serializedState = serialize(state);
-  let moves = movesAtStateDict.get(serializedState);
-  if (moves === undefined) {
-    moves = generateAllMoves(state);
-    movesAtStateDict.set(serializedState, moves);
-  }
+  const moves = generateAllMoves(state);
 
   if (moves.length === 0) {
     // No legal moves = loss for current player
@@ -39,18 +33,18 @@ function minimax(
     let value = -Infinity;
     moves.forEach((move) => {
       const child = applyMove(state, move);
-      value = Math.max(value, minimax(child, depth - 1, alpha, beta, false, stats, movesAtStateDict));
+      value = Math.max(value, minimax(child, depth - 1, alpha, beta, false, stats));
       alpha = Math.max(alpha, value);
-      if (alpha >= beta) value = alpha;
+      if (alpha >= beta) return;
     });
     return value;
   } else {
     let value = Infinity;
     moves.forEach((move) => {
       const child = applyMove(state, move);
-      value = Math.min(value, minimax(child, depth - 1, alpha, beta, true, stats, movesAtStateDict));
+      value = Math.min(value, minimax(child, depth - 1, alpha, beta, true, stats));
       beta = Math.min(beta, value);
-      if (alpha >= beta) value = beta;
+      if (alpha >= beta) return;
     });
     return value;
   }
@@ -61,11 +55,8 @@ function minimax(
  * Evaluates from P1's perspective: P1 maximizes, P2 minimizes.
  */
 export function findBestMove(state: GameState, depth = 4): MinimaxResult {
-  // memoize moves at state
-  const movesAtStateDict = new Map<SerializedGameState, GameMove[]>();
   // TODO: ensure that draw move "reward" is sum(bag_piece_scores) / n_pieces_in_bag
   const moves = generateAllMoves(state);
-  movesAtStateDict.set(serialize(state), moves);
   if (moves.length === 0) return { move: null, score: 0, nodesSearched: 0 };
 
   const maximizing = state.currentPlayer === 'P1';
@@ -76,7 +67,7 @@ export function findBestMove(state: GameState, depth = 4): MinimaxResult {
 
   moves.forEach((move) => {
     const child = applyMove(state, move);
-    const score = minimax(child, depth - 1, -Infinity, Infinity, !maximizing, stats, movesAtStateDict);
+    const score = minimax(child, depth - 1, -Infinity, Infinity, !maximizing, stats);
 
     if (maximizing ? score > bestScore : score < bestScore) {
       bestScore = score;
