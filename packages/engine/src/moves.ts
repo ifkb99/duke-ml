@@ -184,7 +184,7 @@ function generateJumpSlideMoves(
   return moves;
 }
 
-function generateTileMoves(state: GameState, tile: TileInstance): GameMove[] {
+export function generateTileMoves(state: GameState, tile: TileInstance): GameMove[] {
   const def = TILE_REGISTRY.get(tile.defName);
   if (!def) return [];
 
@@ -277,6 +277,16 @@ export function isSquareAttackedBy(
     }
   }
   return false;
+}
+
+/**
+ * Returns true if the given player's Duke is currently in check.
+ */
+export function isPlayerInCheck(state: GameState, player: Player): boolean {
+  const dukePos = findDukePosition(state, player);
+  if (!dukePos) return false;
+  const opponent = player === 'P1' ? 'P2' : 'P1';
+  return isSquareAttackedBy(state, dukePos, opponent);
 }
 
 /**

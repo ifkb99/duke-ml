@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Coord, GameMove, GameState, Player, SetupPhase, TileInstance } from '@the-duke/engine';
 import {
-  createInitialState, generateAllMoves, applyMove,
-  getSetupTargets, applySetupPlacement,
+  createInitialState, generateAllMoves, generateTileMoves, applyMove,
+  getSetupTargets, applySetupPlacement, isPlayerInCheck,
 } from '@the-duke/engine';
 import { pickRandomMove, findBestMove } from '@the-duke/ai';
 import type { GameMode } from '../App.js';
@@ -37,6 +37,15 @@ export interface UseGameReturn {
   /** Setup phase info */
   setupTargets: Coord[];
   setupLabel: string | null;
+  /** Check indicator */
+  inCheck: Player | null;
+  /** Pseudo-legal moves for a clicked enemy tile (for viewing only) */
+  viewingEnemyMoves: GameMove[];
+  /** Show-all-moves toggle */
+  showAllMoves: boolean;
+  toggleShowAllMoves: () => void;
+  allFriendlyTargets: Coord[];
+  allEnemyTargets: Coord[];
 }
 
 export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn {
@@ -47,6 +56,7 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
   const [drawMode, setDrawMode] = useState(false);
   const [selectedDrawTile, setSelectedDrawTile] = useState<string | null>(null);
   const [commandTarget, setCommandTarget] = useState<Coord | null>(null);
+  const [showAllMoves, setShowAllMoves] = useState(false);
   const aiThinking = useRef(false);
 
   const isSetup = state.status === 'setup';
@@ -97,12 +107,69 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
     return dests;
   }, [selectedTile, commandTarget, allMoves]);
 
+  // Check detection
+  const inCheck = useMemo<Player | null>(() => {
+    if (isSetup || state.status !== 'active') return null;
+    if (isPlayerInCheck(state, 'P1')) return 'P1';
+    if (isPlayerInCheck(state, 'P2')) return 'P2';
+    return null;
+  }, [state, isSetup]);
+
+  // Enemy tile move viewing (pseudo-legal moves for display)
+  const viewingEnemyMoves = useMemo<GameMove[]>(() => {
+    if (!selectedTile || drawMode || isSetup) return [];
+    const id = state.board[selectedTile.row][selectedTile.col];
+    if (!id) return [];
+    const tile = state.tiles.get(id);
+    if (!tile || tile.owner === state.currentPlayer) return [];
+    return generateTileMoves(state, tile);
+  }, [selectedTile, state, drawMode, isSetup]);
+
+  // Show-all-moves: compute all squares targeted by friendly and enemy pieces
+  const { allFriendlyTargets, allEnemyTargets } = useMemo(() => {
+    if (!showAllMoves || isSetup || state.status !== 'active') {
+      return { allFriendlyTargets: [] as Coord[], allEnemyTargets: [] as Coord[] };
+    }
+    const player = state.currentPlayer;
+    const opponent = player === 'P1' ? 'P2' : 'P1';
+    const friendlySet = new Set<string>();
+    const enemySet = new Set<string>();
+    const friendlyCoords: Coord[] = [];
+    const enemyCoords: Coord[] = [];
+
+    for (const tile of state.tiles.values()) {
+      const moves = generateTileMoves(state, tile);
+      const isOwner = tile.owner === player;
+      const set = isOwner ? friendlySet : enemySet;
+      const coords = isOwner ? friendlyCoords : enemyCoords;
+      for (const m of moves) {
+        let target: Coord | null = null;
+        if (m.type === 'move') target = m.to;
+        else if (m.type === 'strike') target = m.target;
+        else if (m.type === 'command') target = m.targetTo;
+        if (target) {
+          const key = `${target.row},${target.col}`;
+          if (!set.has(key)) {
+            set.add(key);
+            coords.push(target);
+          }
+        }
+      }
+    }
+    return { allFriendlyTargets: friendlyCoords, allEnemyTargets: enemyCoords };
+  }, [showAllMoves, state, isSetup]);
+
+  const toggleShowAllMoves = useCallback(() => {
+    setShowAllMoves(prev => !prev);
+  }, []);
+
   const resetSelection = useCallback(() => {
     setSelectedTile(null);
     setViewingBagTile(null);
     setDrawMode(false);
     setSelectedDrawTile(null);
     setCommandTarget(null);
+    setShowAllMoves(false);
   }, []);
 
   const newGame = useCallback(() => {
@@ -311,5 +378,11 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
     commandDestinations,
     setupTargets,
     setupLabel,
+    inCheck,
+    viewingEnemyMoves,
+    showAllMoves,
+    toggleShowAllMoves,
+    allFriendlyTargets,
+    allEnemyTargets,
   };
 }

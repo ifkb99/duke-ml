@@ -11,6 +11,8 @@ interface GameControlsProps {
   onUndo: () => void;
   canUndo: boolean;
   compact?: boolean;
+  showAllMoves: boolean;
+  onToggleShowAllMoves: () => void;
 }
 
 const btn: React.CSSProperties = {
@@ -28,6 +30,7 @@ const btn: React.CSSProperties = {
 
 export function GameControls({
   mode, onModeChange, aiPlayer, onAiPlayerChange, state, onNewGame, onUndo, canUndo, compact,
+  showAllMoves, onToggleShowAllMoves,
 }: GameControlsProps) {
   const isVsAi = mode !== 'hotseat';
   const playerColor = state.currentPlayer === 'P1' ? 'var(--p1-color)' : 'var(--p2-color)';
@@ -93,6 +96,18 @@ export function GameControls({
         >
           Undo
         </button>
+        {state.status === 'active' && (
+          <button
+            onClick={onToggleShowAllMoves}
+            style={{
+              ...btn,
+              background: showAllMoves ? 'var(--surface-3)' : 'var(--surface)',
+              borderColor: showAllMoves ? 'var(--accent)' : 'var(--surface-3)',
+            }}
+          >
+            Threats
+          </button>
+        )}
       </div>
 
       <div style={{

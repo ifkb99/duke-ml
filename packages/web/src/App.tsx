@@ -35,6 +35,10 @@ export function App() {
       commandTarget={game.commandTarget}
       commandDestinations={game.commandDestinations}
       setupTargets={game.setupTargets}
+      inCheck={game.inCheck}
+      viewingEnemyMoves={game.viewingEnemyMoves}
+      allFriendlyTargets={game.allFriendlyTargets}
+      allEnemyTargets={game.allEnemyTargets}
     />
   );
 
@@ -91,6 +95,8 @@ export function App() {
         onUndo={game.undo}
         canUndo={game.canUndo}
         compact={isMobile}
+        showAllMoves={game.showAllMoves}
+        onToggleShowAllMoves={game.toggleShowAllMoves}
       />
 
       {/* Setup instruction banner */}

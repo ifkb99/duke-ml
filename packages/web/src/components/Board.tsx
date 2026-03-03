@@ -12,12 +12,17 @@ interface BoardProps {
   commandTarget: Coord | null;
   commandDestinations: Coord[];
   setupTargets: Coord[];
+  inCheck: string | null;
+  viewingEnemyMoves: GameMove[];
+  allFriendlyTargets: Coord[];
+  allEnemyTargets: Coord[];
 }
 
 export function Board({
   state, selectedTile, legalMoves, onCellClick,
   drawMode, placementTargets, commandTarget, commandDestinations,
-  setupTargets,
+  setupTargets, inCheck, viewingEnemyMoves,
+  allFriendlyTargets, allEnemyTargets,
 }: BoardProps) {
   const at = (r: number, c: number, coord: Coord | null) =>
     coord?.row === r && coord?.col === c;
@@ -53,14 +58,40 @@ export function Board({
     );
   };
 
+  const isEnemyMoveTarget = (r: number, c: number) => {
+    if (viewingEnemyMoves.length === 0) return false;
+    return viewingEnemyMoves.some(m => {
+      if (m.type === 'move') return m.to.row === r && m.to.col === c;
+      if (m.type === 'strike') return m.target.row === r && m.target.col === c;
+      if (m.type === 'command') return m.targetTo.row === r && m.targetTo.col === c;
+      return false;
+    });
+  };
+
   const isPlacementTarget = (r: number, c: number) =>
     drawMode && placementTargets.some(p => p.row === r && p.col === c);
 
   const isSetupTarget = (r: number, c: number) =>
     setupTargets.some(t => t.row === r && t.col === c);
 
+  const isDukeInCheck = (r: number, c: number) => {
+    if (!inCheck) return false;
+    const tileId = state.board[r][c];
+    if (!tileId) return false;
+    const tile = state.tiles.get(tileId);
+    return tile?.defName === 'Duke' && tile.owner === inCheck;
+  };
+
+  const isFriendlyAll = (r: number, c: number) =>
+    allFriendlyTargets.some(t => t.row === r && t.col === c);
+
+  const isEnemyAll = (r: number, c: number) =>
+    allEnemyTargets.some(t => t.row === r && t.col === c);
+
   const rows = Array.from({ length: BOARD_SIZE }, (_, i) => i);
   const cols = Array.from({ length: BOARD_SIZE }, (_, i) => i);
+
+  const showAll = allFriendlyTargets.length > 0 || allEnemyTargets.length > 0;
 
   return (
     <div style={{
@@ -85,17 +116,26 @@ export function Board({
           const cmdDest = isCommandDest(r, c);
           const legalTarget = isLegalTarget(r, c);
           const commandable = isCommandableTarget(r, c);
+          const enemyTarget = isEnemyMoveTarget(r, c);
           const placeable = isPlacementTarget(r, c);
           const setupCell = isSetupTarget(r, c);
+          const dukeCheck = isDukeInCheck(r, c);
+          const friendlyAll = showAll && isFriendlyAll(r, c);
+          const enemyAll = showAll && isEnemyAll(r, c);
 
           let bg: string;
-          if (setupCell) bg = 'var(--highlight)';
+          if (dukeCheck) bg = 'rgba(220, 60, 60, 0.4)';
+          else if (setupCell) bg = 'var(--highlight)';
           else if (selected) bg = 'var(--selected)';
           else if (cmdTarget) bg = 'rgba(196,162,74,0.3)';
           else if (cmdDest) bg = 'rgba(196,162,74,0.2)';
           else if (commandable) bg = 'rgba(196,162,74,0.15)';
           else if (legalTarget) bg = 'var(--highlight)';
+          else if (enemyTarget) bg = 'rgba(220, 60, 60, 0.22)';
           else if (placeable) bg = 'var(--accent-dim)';
+          else if (friendlyAll && enemyAll) bg = 'rgba(180, 130, 50, 0.25)';
+          else if (friendlyAll) bg = 'rgba(60, 180, 80, 0.2)';
+          else if (enemyAll) bg = 'rgba(220, 60, 60, 0.18)';
           else bg = dark ? 'var(--board-dark)' : 'var(--board-light)';
 
           const isCorner = (r === 0 || r === BOARD_SIZE - 1) && (c === 0 || c === BOARD_SIZE - 1);
@@ -124,6 +164,15 @@ export function Board({
               }}
             >
               {tile && <Tile tile={tile} />}
+
+              {dukeCheck && tile && (
+                <div style={{
+                  position: 'absolute', inset: '2px', borderRadius: '5px',
+                  border: '2px solid rgba(220, 60, 60, 0.7)',
+                  boxShadow: '0 0 10px rgba(220, 60, 60, 0.4)',
+                  pointerEvents: 'none',
+                }} />
+              )}
 
               {!tile && cmdDest && (
                 <div style={{
@@ -182,6 +231,41 @@ export function Board({
                 <div style={{
                   position: 'absolute', inset: '2px', borderRadius: '5px',
                   border: '2px solid var(--accent)', pointerEvents: 'none',
+                }} />
+              )}
+
+              {enemyTarget && !tile && (
+                <div style={{
+                  width: '28%', height: '28%', borderRadius: '50%',
+                  background: 'rgba(220, 60, 60, 0.6)', opacity: 0.6,
+                }} />
+              )}
+
+              {enemyTarget && tile && (
+                <div style={{
+                  position: 'absolute', inset: '2px', borderRadius: '5px',
+                  border: '2px solid rgba(220, 60, 60, 0.6)', pointerEvents: 'none',
+                }} />
+              )}
+
+              {showAll && !tile && friendlyAll && !enemyAll && (
+                <div style={{
+                  width: '22%', height: '22%', borderRadius: '50%',
+                  background: 'rgba(60, 180, 80, 0.6)',
+                }} />
+              )}
+
+              {showAll && !tile && enemyAll && !friendlyAll && (
+                <div style={{
+                  width: '22%', height: '22%', borderRadius: '50%',
+                  background: 'rgba(220, 60, 60, 0.5)',
+                }} />
+              )}
+
+              {showAll && !tile && friendlyAll && enemyAll && (
+                <div style={{
+                  width: '22%', height: '22%', borderRadius: '50%',
+                  background: 'rgba(180, 130, 50, 0.6)',
                 }} />
               )}
             </div>
