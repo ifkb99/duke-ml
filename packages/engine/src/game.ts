@@ -1,6 +1,6 @@
-import type { Coord, GameMove, GameState, SetupPhase, TileInstance } from './types.js';
-import { BOARD_SIZE, cloneState } from './state.js';
-import { hasAnyLegalMove } from './moves.js';
+import type {Coord, GameMove, GameState, SetupPhase, TileInstance} from './types.js';
+import {BOARD_SIZE, cloneState} from './state.js';
+import {hasAnyLegalMove} from './moves.js';
 
 let nextInstanceCounter = 0;
 
@@ -14,8 +14,8 @@ export function resetInstanceCounter(val = 0): void {
 // ---------------------------------------------------------------------------
 
 const ORTHOGONAL: readonly Coord[] = [
-  { row: -1, col: 0 }, { row: 1, col: 0 },
-  { row: 0, col: -1 }, { row: 0, col: 1 },
+  {row: -1, col: 0}, {row: 1, col: 0},
+  {row: 0, col: -1}, {row: 0, col: 1},
 ];
 
 function findDukeCoord(state: GameState, owner: 'P1' | 'P2'): Coord | null {
@@ -31,7 +31,7 @@ function adjacentEmpty(state: GameState, origin: Coord): Coord[] {
     const r = origin.row + d.row;
     const c = origin.col + d.col;
     if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE && !state.board[r][c]) {
-      targets.push({ row: r, col: c });
+      targets.push({row: r, col: c});
     }
   }
   return targets;
@@ -45,14 +45,14 @@ export function getSetupTargets(state: GameState): Coord[] {
     case 'p1_duke': {
       const targets: Coord[] = [];
       for (let c = 0; c < BOARD_SIZE; c++) {
-        if (!state.board[0][c]) targets.push({ row: 0, col: c });
+        if (!state.board[0][c]) targets.push({row: 0, col: c});
       }
       return targets;
     }
     case 'p2_duke': {
       const targets: Coord[] = [];
       for (let c = 0; c < BOARD_SIZE; c++) {
-        if (!state.board[BOARD_SIZE - 1][c]) targets.push({ row: BOARD_SIZE - 1, col: c });
+        if (!state.board[BOARD_SIZE - 1][c]) targets.push({row: BOARD_SIZE - 1, col: c});
       }
       return targets;
     }
@@ -113,7 +113,7 @@ export function applySetupPlacement(state: GameState, coord: Coord): GameState {
     defName,
     owner: player,
     side: 'A',
-    position: { ...coord },
+    position: {...coord},
     id,
   };
   s.tiles.set(id, tile);
@@ -202,7 +202,7 @@ function removeTile(s: GameState, tileId: string): void {
 
 function applyPlace(
   s: GameState,
-  move: { type: 'place'; tileName: string; position: { row: number; col: number } },
+  move: {type: 'place'; tileName: string; position: {row: number; col: number}},
 ): void {
   const player = s.currentPlayer;
   const bag = s.bags[player];
@@ -215,7 +215,7 @@ function applyPlace(
     defName: move.tileName,
     owner: player,
     side: 'A',
-    position: { ...move.position },
+    position: {...move.position},
     id,
   };
   s.tiles.set(id, tile);
@@ -224,7 +224,7 @@ function applyPlace(
 
 function applyMoveTile(
   s: GameState,
-  move: { type: 'move'; from: { row: number; col: number }; to: { row: number; col: number } },
+  move: {type: 'move'; from: {row: number; col: number}; to: {row: number; col: number}},
 ): void {
   const fromId = s.board[move.from.row][move.from.col];
   if (!fromId) throw new Error(`No tile at (${move.from.row},${move.from.col})`);
@@ -237,27 +237,31 @@ function applyMoveTile(
   const tile = s.tiles.get(fromId)!;
   s.board[move.from.row][move.from.col] = null;
   s.board[move.to.row][move.to.col] = fromId;
-  tile.position = { ...move.to };
+  tile.position = {...move.to};
 
   tile.side = tile.side === 'A' ? 'B' : 'A';
 }
 
 function applyStrike(
   s: GameState,
-  move: { type: 'strike'; from: { row: number; col: number }; target: { row: number; col: number } },
+  move: {type: 'strike'; from: {row: number; col: number}; target: {row: number; col: number}},
 ): void {
+  const fromId = s.board[move.from.row][move.from.col];
+  if (!fromId) throw new Error(`No tile at (${move.from.row},${move.from.col})`);
+  const tile = s.tiles.get(fromId)!;
   const targetId = s.board[move.target.row][move.target.col];
   if (!targetId) throw new Error(`No tile at strike target (${move.target.row},${move.target.col})`);
   removeTile(s, targetId);
+  tile.side = tile.side === 'A' ? 'B' : 'A';
 }
 
 function applyCommand(
   s: GameState,
   move: {
     type: 'command';
-    commander: { row: number; col: number };
-    target: { row: number; col: number };
-    targetTo: { row: number; col: number };
+    commander: {row: number; col: number};
+    target: {row: number; col: number};
+    targetTo: {row: number; col: number};
   },
 ): void {
   const targetId = s.board[move.target.row][move.target.col];
@@ -271,7 +275,7 @@ function applyCommand(
   const tile = s.tiles.get(targetId)!;
   s.board[move.target.row][move.target.col] = null;
   s.board[move.targetTo.row][move.targetTo.col] = targetId;
-  tile.position = { ...move.targetTo };
+  tile.position = {...move.targetTo};
 
   tile.side = tile.side === 'A' ? 'B' : 'A';
 }
