@@ -172,17 +172,16 @@ function generateJumpSlideMoves( // TODO: cannot land on closest square
   const moves: GameMove[] = [];
   for (const dir of pattern.offsets) {
     const adjusted = adjustOffset(dir, player);
-    const jumpedOver = addOffset(from, adjusted);
-    if (!inBounds(jumpedOver)) continue;
+    const target = addOffset(from, adjusted);
+    if (!inBounds(target)) continue;
 
-    let current = jumpedOver;
+    let current = target;
     while (true) {
       current = addOffset(current, adjusted);
       if (!inBounds(current)) break;
       const occupant = tileAt(state, current);
-      if (occupant && isFriendly(occupant, player)) break;
+      if (occupant && isFriendly(occupant, player)) continue;
       moves.push({ type: 'move', from, to: current });
-      if (occupant && isEnemy(occupant, player)) break;
     }
   }
   return moves;
