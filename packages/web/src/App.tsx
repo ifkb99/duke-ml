@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import type { Player } from '@the-duke/engine';
 import { Board } from './components/Board.js';
 import { GameControls } from './components/GameControls.js';
 import { BagPanel } from './components/BagPanel.js';
@@ -10,7 +11,8 @@ export type GameMode = 'hotseat' | 'vs-random' | 'vs-minimax';
 
 export function App() {
   const [mode, setMode] = useState<GameMode>('vs-minimax');
-  const game = useGame(mode);
+  const [aiPlayer, setAiPlayer] = useState<Player>('P2');
+  const game = useGame(mode, aiPlayer);
   const isMobile = useIsMobile(660);
 
   const { state } = game;
@@ -82,6 +84,8 @@ export function App() {
       <GameControls
         mode={mode}
         onModeChange={setMode}
+        aiPlayer={aiPlayer}
+        onAiPlayerChange={setAiPlayer}
         state={state}
         onNewGame={game.newGame}
         onUndo={game.undo}

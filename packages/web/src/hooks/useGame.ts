@@ -39,7 +39,7 @@ export interface UseGameReturn {
   setupLabel: string | null;
 }
 
-export function useGame(mode: GameMode): UseGameReturn {
+export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn {
   const [state, setState] = useState<GameState>(() => createInitialState());
   const [history, setHistory] = useState<GameState[]>([]);
   const [selectedTile, setSelectedTile] = useState<Coord | null>(null);
@@ -157,7 +157,7 @@ export function useGame(mode: GameMode): UseGameReturn {
   // AI turn logic — covers both setup and normal play
   useEffect(() => {
     if (mode === 'hotseat') return;
-    if (state.currentPlayer !== 'P2') return;
+    if (state.currentPlayer !== aiPlayer) return;
     if (aiThinking.current) return;
 
     // Setup phase AI
@@ -192,12 +192,12 @@ export function useGame(mode: GameMode): UseGameReturn {
     }, 300);
 
     return () => { clearTimeout(timer); aiThinking.current = false; };
-  }, [state, mode, isSetup, setupTargets]);
+  }, [state, mode, aiPlayer, isSetup, setupTargets]);
 
   const onCellClick = useCallback((coord: Coord) => {
     // Setup phase: only accept valid setup placements
     if (isSetup) {
-      if (mode !== 'hotseat' && state.currentPlayer === 'P2') return;
+      if (mode !== 'hotseat' && state.currentPlayer === aiPlayer) return;
       if (setupTargets.some(t => t.row === coord.row && t.col === coord.col)) {
         executeSetup(coord);
       }
@@ -205,7 +205,7 @@ export function useGame(mode: GameMode): UseGameReturn {
     }
 
     if (state.status !== 'active') return;
-    if (mode !== 'hotseat' && state.currentPlayer === 'P2') return;
+    if (mode !== 'hotseat' && state.currentPlayer === aiPlayer) return;
 
     const clickedId = state.board[coord.row][coord.col];
     const clickedTile = clickedId ? state.tiles.get(clickedId) ?? null : null;
@@ -289,7 +289,7 @@ export function useGame(mode: GameMode): UseGameReturn {
 
     setSelectedTile(null);
     setCommandTarget(null);
-  }, [state, selectedTile, commandTarget, allMoves, drawMode, selectedDrawTile, executeMove, executeSetup, mode, isSetup, setupTargets]);
+  }, [state, selectedTile, commandTarget, allMoves, drawMode, selectedDrawTile, executeMove, executeSetup, mode, aiPlayer, isSetup, setupTargets]);
 
   return {
     state,

@@ -1,9 +1,11 @@
-import type { GameState } from '@the-duke/engine';
+import type { GameState, Player } from '@the-duke/engine';
 import type { GameMode } from '../App.js';
 
 interface GameControlsProps {
   mode: GameMode;
   onModeChange: (mode: GameMode) => void;
+  aiPlayer: Player;
+  onAiPlayerChange: (player: Player) => void;
   state: GameState;
   onNewGame: () => void;
   onUndo: () => void;
@@ -25,8 +27,9 @@ const btn: React.CSSProperties = {
 };
 
 export function GameControls({
-  mode, onModeChange, state, onNewGame, onUndo, canUndo, compact,
+  mode, onModeChange, aiPlayer, onAiPlayerChange, state, onNewGame, onUndo, canUndo, compact,
 }: GameControlsProps) {
+  const isVsAi = mode !== 'hotseat';
   const playerColor = state.currentPlayer === 'P1' ? 'var(--p1-color)' : 'var(--p2-color)';
   const playerLabel = state.currentPlayer === 'P1' ? 'Light' : 'Dark';
 
@@ -62,6 +65,25 @@ export function GameControls({
           <option value="vs-random">vs Random</option>
           <option value="vs-minimax">vs Minimax</option>
         </select>
+
+        {isVsAi && (
+          <select
+            value={aiPlayer}
+            onChange={e => onAiPlayerChange(e.target.value as Player)}
+            style={{
+              ...btn,
+              appearance: 'none',
+              paddingRight: '1.4rem',
+              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%236e7086' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+              backgroundRepeat: 'no-repeat',
+              backgroundPosition: 'right 0.45rem center',
+              fontSize: compact ? '0.72rem' : '0.78rem',
+            }}
+          >
+            <option value="P2">Play as Light</option>
+            <option value="P1">Play as Dark</option>
+          </select>
+        )}
 
         <button onClick={onNewGame} style={btn}>New</button>
         <button

@@ -155,7 +155,7 @@ describe('applyMove', () => {
     expect(footman.position).toEqual({ row: 2, col: 3 });
   });
 
-  it('does not flip tile on strike', () => {
+  it('flips tile on strike', () => {
     const state = makeState();
     placeTile(state, {
       id: 'P1-Longbowman-1', defName: 'Longbowman', owner: 'P1', side: 'A',
@@ -173,7 +173,7 @@ describe('applyMove', () => {
     const next = applyMove(state, { type: 'strike', from: { row: 4, col: 3 }, target: { row: 2, col: 3 } });
 
     const lb = next.tiles.get('P1-Longbowman-1')!;
-    expect(lb.side).toBe('A');
+    expect(lb.side).toBe('B');
     expect(lb.position).toEqual({ row: 4, col: 3 });
     expect(next.tiles.has('P2-Footman-1')).toBe(false);
   });
