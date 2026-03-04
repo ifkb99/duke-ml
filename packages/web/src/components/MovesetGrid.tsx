@@ -5,6 +5,7 @@ interface MovesetGridProps {
     label: string;
     flipVertical?: boolean;
     isCurrent?: boolean;
+    cellSize?: number;
 }
 
 const GRID_SIZE = 7;
@@ -18,15 +19,6 @@ const MOVE_COLORS: Record<MoveType | 'self', string> = {
     strike: '#c4586a',
     command: '#c4a24a',
     self: '#302e40',
-};
-
-const MOVE_LABELS: Record<MoveType, string> = {
-    step: 'Step',
-    slide: 'Slide',
-    jump: 'Jump',
-    jump_slide: 'J-Slide',
-    strike: 'Strike',
-    command: 'Command',
 };
 
 interface CellEntry {type: MoveType; distance: number}
@@ -81,12 +73,6 @@ function buildGrid(side: TileSide, flip: boolean): CellInfo[][] {
     return grid;
 }
 
-function usedTypes(side: TileSide): MoveType[] {
-    const types = new Set<MoveType>();
-    for (const p of side.patterns) types.add(p.type);
-    return [...types];
-}
-
 function SingleCell({entry, size}: {entry: CellEntry; size: number}) {
     const color = MOVE_COLORS[entry.type];
     const opacity = entry.distance === 3 ? 0.45 : entry.distance === 2 ? 0.7 : 1;
@@ -132,18 +118,17 @@ function DualCell({entries, size}: {entries: [CellEntry, CellEntry]; size: numbe
     );
 }
 
-export function MovesetGrid({side, label, flipVertical = false, isCurrent}: MovesetGridProps) {
+export function MovesetGrid({side, label, flipVertical = false, isCurrent, cellSize: cellSizeProp}: MovesetGridProps) {
     const grid = buildGrid(side, flipVertical);
-    const types = usedTypes(side);
-    const cellSize = 22;
+    const cellSize = cellSizeProp ?? 22;
 
     return (
         <div style={{
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            gap: '4px',
-            padding: '6px',
+            gap: '3px',
+            padding: '4px',
             borderRadius: 'var(--radius)',
             border: isCurrent
                 ? '1.5px solid var(--accent)'
@@ -224,19 +209,6 @@ export function MovesetGrid({side, label, flipVertical = false, isCurrent}: Move
                 )}
             </div>
 
-            <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center'}}>
-                {types.map(t => (
-                    <div key={t} style={{
-                        display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.56rem',
-                    }}>
-                        <div style={{
-                            width: '7px', height: '7px', borderRadius: '2px',
-                            background: MOVE_COLORS[t],
-                        }} />
-                        <span style={{color: 'var(--text-muted)'}}>{MOVE_LABELS[t]}</span>
-                    </div>
-                ))}
-            </div>
         </div>
     );
 }

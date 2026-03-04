@@ -69,9 +69,11 @@ export function App() {
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
-      gap: isMobile ? '0.6rem' : '0.85rem',
+      gap: isMobile ? '0.4rem' : '0.6rem',
       width: '100%',
       maxWidth: '820px',
+      height: '100%',
+      overflow: 'hidden',
     }}>
       {/* Title */}
       <h1 style={{
@@ -125,6 +127,8 @@ export function App() {
           width: '100%',
           alignItems: 'flex-start',
           justifyContent: 'center',
+          flex: '1 1 0',
+          minHeight: 0,
         }}>
           {!isSetup && p1Bag}
           {boardEl}
@@ -135,12 +139,30 @@ export function App() {
       {/* Mobile: board then bags below */}
       {isMobile && (
         <>
-          {boardEl}
+          <div style={{
+            flex: '1 1 0',
+            minHeight: 0,
+            width: '100%',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'flex-start',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              width: '100%',
+              maxWidth: '460px',
+              maxHeight: '100%',
+              aspectRatio: '1',
+            }}>
+              {boardEl}
+            </div>
+          </div>
           {!isSetup && (
             <div style={{
               display: 'flex',
               gap: '6px',
               width: '100%',
+              flexShrink: 0,
             }}>
               {p1Bag}
               {p2Bag}
@@ -161,6 +183,7 @@ export function App() {
           onStartDraw={game.startDraw}
           commandTarget={game.commandTarget}
           commandTargetTile={commandTargetTile}
+          compact={isMobile}
         />
       )}
 

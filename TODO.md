@@ -1,0 +1,5 @@
+- rules page for new players
+- move/command space only allows command atm
+- favicon and other <head></head> info
+- multiplayer over websocket
+- ml time! muZero and then onnx
