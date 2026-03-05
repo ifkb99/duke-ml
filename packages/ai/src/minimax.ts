@@ -1,5 +1,5 @@
 import type {Coord, GameMove, GameState, Player} from '@the-duke/engine';
-import {generatePseudoLegalMoves, isSquareAttackedBy, makeMove, unmakeMove} from '@the-duke/engine';
+import {findDukePosition, generatePseudoLegalMoves, isSquareAttackedBy, makeMove, unmakeMove} from '@the-duke/engine';
 import {evaluate} from './evaluate.js';
 import {TT_EXACT, TT_LOWER, TT_UPPER, hashState, ttStore, ttProbe} from './utils/zobrist.js';
 
@@ -13,23 +13,15 @@ export interface MinimaxResult {
 // Inline legality check — avoids the double make/unmake of generateAllMoves
 // ---------------------------------------------------------------------------
 
-function findDukePos(state: GameState, player: Player): Coord | null {
-  for (const tile of state.tiles.values()) {
-    if (tile.owner === player && tile.defName === 'Duke') return tile.position;
-  }
-  return null;
-}
-
 /**
  * After makeMove has been called, check whether the move was legal
  * (i.e. the mover's Duke is not left in check).
  * `mover` is the player who made the move (before makeMove switched currentPlayer).
  */
 function isLegalAfterMake(state: GameState, mover: Player): boolean {
-  // If the game ended (Duke captured), it's always legal
   if (state.status !== 'active') return true;
   const opponent = mover === 'P1' ? 'P2' : 'P1';
-  const dukePos = findDukePos(state, mover);
+  const dukePos = findDukePosition(state, mover);
   return dukePos ? !isSquareAttackedBy(state, dukePos, opponent) : false;
 }
 

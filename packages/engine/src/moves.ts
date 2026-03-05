@@ -255,7 +255,7 @@ function generatePlacementMoves(state: GameState): GameMove[] {
 
 // --- Check detection ---
 
-function findDukePosition(state: GameState, player: Player): Coord | null {
+export function findDukePosition(state: GameState, player: Player): Coord | null {
   for (const tile of state.tiles.values()) {
     if (tile.owner === player && tile.defName === 'Duke') {
       return tile.position;
@@ -505,45 +505,6 @@ export function generateAllMoves(state: GameState): GameMove[] {
  */
 export function hasAnyLegalMove(state: GameState): boolean {
   if (state.status !== 'active') return false;
-
-  const player = state.currentPlayer;
-  const opponent = player === 'P1' ? 'P2' : 'P1';
-
-  // Collect player tiles into array to avoid iterator invalidation during make/unmake
-  const playerTiles: TileInstance[] = [];
-  for (const tile of state.tiles.values()) {
-    if (tile.owner === player) playerTiles.push(tile);
-  }
-
-  // Check tile moves
-  for (const tile of playerTiles) {
-    const tileMoves = generateTileMoves(state, tile);
-    for (const move of tileMoves) {
-      const undo = makeMove(state, move);
-      if (state.status !== 'active') {
-        unmakeMove(state, undo);
-        return true;
-      }
-      const dukePos = findDukePosition(state, player);
-      const legal = dukePos && !isSquareAttackedBy(state, dukePos, opponent);
-      unmakeMove(state, undo);
-      if (legal) return true;
-    }
-  }
-
-  // Check placement moves
-  const placements = generatePlacementMoves(state);
-  for (const move of placements) {
-    const undo = makeMove(state, move);
-    if (state.status !== 'active') {
-      unmakeMove(state, undo);
-      return true;
-    }
-    const dukePos = findDukePosition(state, player);
-    const legal = dukePos && !isSquareAttackedBy(state, dukePos, opponent);
-    unmakeMove(state, undo);
-    if (legal) return true;
-  }
-
-  return false;
+  const pseudo = generatePseudoLegalMoves(state);
+  return pseudo.some(m => isMoveLegal(state, m));
 }

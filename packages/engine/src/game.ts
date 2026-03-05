@@ -1,6 +1,6 @@
 import type {Coord, GameMove, GameState, SetupPhase, Side, TileInstance, UndoRecord} from './types.js';
 import {BOARD_SIZE, cloneState} from './state.js';
-import {hasAnyLegalMove} from './moves.js';
+import {findDukePosition, hasAnyLegalMove} from './moves.js';
 
 let nextInstanceCounter = 0;
 
@@ -17,13 +17,6 @@ const ORTHOGONAL: readonly Coord[] = [
   {row: -1, col: 0}, {row: 1, col: 0},
   {row: 0, col: -1}, {row: 0, col: 1},
 ];
-
-function findDukeCoord(state: GameState, owner: 'P1' | 'P2'): Coord | null {
-  for (const t of state.tiles.values()) {
-    if (t.defName === 'Duke' && t.owner === owner) return t.position;
-  }
-  return null;
-}
 
 function adjacentEmpty(state: GameState, origin: Coord): Coord[] {
   const targets: Coord[] = [];
@@ -58,12 +51,12 @@ export function getSetupTargets(state: GameState): Coord[] {
     }
     case 'p1_footman1':
     case 'p1_footman2': {
-      const duke = findDukeCoord(state, 'P1');
+      const duke = findDukePosition(state, 'P1');
       return duke ? adjacentEmpty(state, duke) : [];
     }
     case 'p2_footman1':
     case 'p2_footman2': {
-      const duke = findDukeCoord(state, 'P2');
+      const duke = findDukePosition(state, 'P2');
       return duke ? adjacentEmpty(state, duke) : [];
     }
   }
@@ -143,42 +136,12 @@ export function applySetupPlacement(state: GameState, coord: Coord): GameState {
 // ---------------------------------------------------------------------------
 
 /**
- * Apply a move without checkmate detection.
- * Used internally by move-legality filtering to avoid circular calls.
- */
-export function applyMoveRaw(state: GameState, move: GameMove): GameState {
-  const s = cloneState(state);
-
-  switch (move.type) {
-    case 'place':
-      applyPlace(s, move);
-      break;
-    case 'move':
-      applyMoveTile(s, move);
-      break;
-    case 'strike':
-      applyStrike(s, move);
-      break;
-    case 'command':
-      applyCommand(s, move);
-      break;
-  }
-
-  if (s.status === 'active') {
-    s.currentPlayer = s.currentPlayer === 'P1' ? 'P2' : 'P1';
-    s.turnNumber++;
-  }
-
-  return s;
-}
-
-/**
- * Apply a move and detect checkmate/stalemate.
- * If the resulting position leaves the new current player with no legal
- * moves, the game ends as a loss for that player.
+ * Apply a move immutably — clones state, applies in-place via makeMove,
+ * then checks for checkmate/stalemate.
  */
 export function applyMove(state: GameState, move: GameMove): GameState {
-  const newState = applyMoveRaw(state, move);
+  const newState = cloneState(state);
+  makeMove(newState, move);
 
   if (newState.status !== 'active') return newState;
 
@@ -189,97 +152,6 @@ export function applyMove(state: GameState, move: GameMove): GameState {
   return newState;
 }
 
-function removeTile(s: GameState, tileId: string): void {
-  const tile = s.tiles.get(tileId);
-  if (!tile) return;
-  s.board[tile.position.row][tile.position.col] = null;
-  s.tiles.delete(tileId);
-
-  if (tile.defName === 'Duke') {
-    s.status = tile.owner === 'P1' ? 'P2_wins' : 'P1_wins';
-  }
-}
-
-function applyPlace(
-  s: GameState,
-  move: {type: 'place'; tileName: string; position: {row: number; col: number}},
-): void {
-  const player = s.currentPlayer;
-  const bag = s.bags[player];
-  const idx = bag.indexOf(move.tileName);
-  if (idx === -1) throw new Error(`Tile ${move.tileName} not in ${player}'s bag`);
-  bag.splice(idx, 1);
-
-  const id = `${player}-${move.tileName}-${++nextInstanceCounter}`;
-  const tile: TileInstance = {
-    defName: move.tileName,
-    owner: player,
-    side: 'A',
-    position: {...move.position},
-    id,
-  };
-  s.tiles.set(id, tile);
-  s.board[move.position.row][move.position.col] = id;
-}
-
-function applyMoveTile(
-  s: GameState,
-  move: {type: 'move'; from: {row: number; col: number}; to: {row: number; col: number}},
-): void {
-  const fromId = s.board[move.from.row][move.from.col];
-  if (!fromId) throw new Error(`No tile at (${move.from.row},${move.from.col})`);
-
-  const toId = s.board[move.to.row][move.to.col];
-  if (toId) {
-    removeTile(s, toId);
-  }
-
-  const tile = s.tiles.get(fromId)!;
-  s.board[move.from.row][move.from.col] = null;
-  s.board[move.to.row][move.to.col] = fromId;
-  tile.position = {...move.to};
-
-  tile.side = tile.side === 'A' ? 'B' : 'A';
-}
-
-function applyStrike(
-  s: GameState,
-  move: {type: 'strike'; from: {row: number; col: number}; target: {row: number; col: number}},
-): void {
-  const fromId = s.board[move.from.row][move.from.col];
-  if (!fromId) throw new Error(`No tile at (${move.from.row},${move.from.col})`);
-  const tile = s.tiles.get(fromId)!;
-  const targetId = s.board[move.target.row][move.target.col];
-  if (!targetId) throw new Error(`No tile at strike target (${move.target.row},${move.target.col})`);
-  removeTile(s, targetId);
-  tile.side = tile.side === 'A' ? 'B' : 'A';
-}
-
-function applyCommand(
-  s: GameState,
-  move: {
-    type: 'command';
-    commander: {row: number; col: number};
-    target: {row: number; col: number};
-    targetTo: {row: number; col: number};
-  },
-): void {
-  const targetId = s.board[move.target.row][move.target.col];
-  if (!targetId) throw new Error(`No tile at command target`);
-
-  const destId = s.board[move.targetTo.row][move.targetTo.col];
-  if (destId) {
-    removeTile(s, destId);
-  }
-
-  const tile = s.tiles.get(targetId)!;
-  s.board[move.target.row][move.target.col] = null;
-  s.board[move.targetTo.row][move.targetTo.col] = targetId;
-  tile.position = {...move.targetTo};
-
-  tile.side = tile.side === 'A' ? 'B' : 'A';
-}
-
 // ---------------------------------------------------------------------------
 // Make / Unmake (in-place mutation for search)
 // ---------------------------------------------------------------------------
@@ -287,7 +159,7 @@ function applyCommand(
 /**
  * Apply a move in-place to the given state, returning an UndoRecord
  * that can be passed to unmakeMove to restore the previous state.
- * Does NOT perform checkmate/stalemate detection.
+ * Does NOT perform checkmate/stalemate detection (except Duke capture).
  */
 export function makeMove(state: GameState, move: GameMove): UndoRecord {
   const undo: UndoRecord = {
