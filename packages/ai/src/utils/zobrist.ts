@@ -53,6 +53,10 @@ function makeZobristKeys() {
 
 const ZOBRIST = makeZobristKeys();
 
+// Pre-allocated array for bag counting — avoids Map allocation per call.
+// Indexed by [tileNameIdx * 2 + playerIdx], stores count.
+const _bagCounts = new Int8Array(ALL_TILES.length * 2);
+
 export function hashState(state: GameState): number {
   let h = 0;
   for (const tile of state.tiles.values()) {
@@ -64,17 +68,20 @@ export function hashState(state: GameState): number {
   }
   if (state.currentPlayer === 'P2') h ^= ZOBRIST.turnKey;
 
-  // Hash bag contents
-  const bagCounts: [Map<string, number>, Map<string, number>] = [new Map(), new Map()];
+  // Hash bag contents using pre-allocated count array (no Map allocation)
+  _bagCounts.fill(0);
   for (const name of state.bags.P1) {
-    bagCounts[0].set(name, (bagCounts[0].get(name) ?? 0) + 1);
+    const ti = ZOBRIST.tileIndex.get(name);
+    if (ti !== undefined) _bagCounts[ti * 2]++;
   }
   for (const name of state.bags.P2) {
-    bagCounts[1].set(name, (bagCounts[1].get(name) ?? 0) + 1);
+    const ti = ZOBRIST.tileIndex.get(name);
+    if (ti !== undefined) _bagCounts[ti * 2 + 1]++;
   }
-  for (const [name, ti] of ZOBRIST.tileIndex) {
-    h ^= ZOBRIST.bagKeys[ti][0][bagCounts[0].get(name) ?? 0];
-    h ^= ZOBRIST.bagKeys[ti][1][bagCounts[1].get(name) ?? 0];
+  const numTiles = ALL_TILES.length;
+  for (let ti = 0; ti < numTiles; ti++) {
+    h ^= ZOBRIST.bagKeys[ti][0][_bagCounts[ti * 2]];
+    h ^= ZOBRIST.bagKeys[ti][1][_bagCounts[ti * 2 + 1]];
   }
 
   return h;

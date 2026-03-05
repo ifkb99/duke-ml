@@ -1,5 +1,5 @@
-import type {GameMove, GameState} from '@the-duke/engine';
-import {generateAllMoves, applyMove} from '@the-duke/engine';
+import type {Coord, GameMove, GameState, Player} from '@the-duke/engine';
+import {generatePseudoLegalMoves, isSquareAttackedBy, makeMove, unmakeMove} from '@the-duke/engine';
 import {evaluate} from './evaluate.js';
 import {TT_EXACT, TT_LOWER, TT_UPPER, hashState, ttStore, ttProbe} from './utils/zobrist.js';
 
@@ -7,6 +7,30 @@ export interface MinimaxResult {
   move: GameMove | null;
   score: number;
   nodesSearched: number;
+}
+
+// ---------------------------------------------------------------------------
+// Inline legality check — avoids the double make/unmake of generateAllMoves
+// ---------------------------------------------------------------------------
+
+function findDukePos(state: GameState, player: Player): Coord | null {
+  for (const tile of state.tiles.values()) {
+    if (tile.owner === player && tile.defName === 'Duke') return tile.position;
+  }
+  return null;
+}
+
+/**
+ * After makeMove has been called, check whether the move was legal
+ * (i.e. the mover's Duke is not left in check).
+ * `mover` is the player who made the move (before makeMove switched currentPlayer).
+ */
+function isLegalAfterMake(state: GameState, mover: Player): boolean {
+  // If the game ended (Duke captured), it's always legal
+  if (state.status !== 'active') return true;
+  const opponent = mover === 'P1' ? 'P2' : 'P1';
+  const dukePos = findDukePos(state, mover);
+  return dukePos ? !isSquareAttackedBy(state, dukePos, opponent) : false;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,9 +126,31 @@ function splitMoves(
 // with player choosing best placement position for each drawn tile.
 // ---------------------------------------------------------------------------
 
+/** Apply makeMove, check legality, call minimax if legal, then unmakeMove. Returns null if illegal. */
+function applyAndSearch(
+  state: GameState,
+  move: GameMove,
+  mover: Player,
+  depth: number,
+  alpha: number,
+  beta: number,
+  childMaximizing: boolean,
+  stats: {nodes: number},
+): number | null {
+  const undo = makeMove(state, move);
+  if (!isLegalAfterMake(state, mover)) {
+    unmakeMove(state, undo);
+    return null; // illegal move
+  }
+  const score = minimax(state, depth, alpha, beta, childMaximizing, stats);
+  unmakeMove(state, undo);
+  return score;
+}
+
 function evaluateChanceNode(
   drawOutcomes: DrawOutcome[],
   state: GameState,
+  mover: Player,
   depth: number,
   alpha: number,
   beta: number,
@@ -116,14 +162,12 @@ function evaluateChanceNode(
   for (const {probability, placements} of drawOutcomes) {
     let bestPlacementScore = maximizing ? -Infinity : Infinity;
 
-    // Player chooses where to place — this is a deterministic max/min decision.
-    // Use local copies of alpha/beta for pruning within placements.
     let innerAlpha = alpha;
     let innerBeta = beta;
 
     for (const move of placements) {
-      const child = applyMove(state, move);
-      const score = minimax(child, depth - 1, innerAlpha, innerBeta, !maximizing, stats);
+      const score = applyAndSearch(state, move, mover, depth - 1, innerAlpha, innerBeta, !maximizing, stats);
+      if (score === null) continue; // illegal
 
       if (maximizing) {
         bestPlacementScore = Math.max(bestPlacementScore, score);
@@ -143,6 +187,7 @@ function evaluateChanceNode(
 
 // ---------------------------------------------------------------------------
 // Minimax with alpha-beta pruning + transposition table + expectimax draws
+// Uses pseudo-legal moves with inline legality checking to avoid double work.
 // ---------------------------------------------------------------------------
 
 function minimax(
@@ -155,7 +200,7 @@ function minimax(
 ): number {
   stats.nodes++;
 
-  if (depth === 0 || state.status !== 'active') {
+  if (depth <= 0 || state.status !== 'active') {
     return evaluate(state);
   }
 
@@ -165,53 +210,68 @@ function minimax(
   const ttHit = ttProbe(hash, depth, alpha, beta);
   if (ttHit !== null) return ttHit;
 
-  const allMoves = generateAllMoves(state);
+  // Use pseudo-legal moves — legality is checked inline in applyAndSearch
+  const allMoves = generatePseudoLegalMoves(state);
 
   if (allMoves.length === 0) {
-    // No legal moves = loss for current player
+    // No pseudo-legal moves = loss for current player
     return maximizing ? -99_999 : 99_999;
   }
 
+  const mover = state.currentPlayer;
   const {boardMoves, drawOutcomes} = splitMoves(allMoves, state);
   const orderedBoardMoves = orderMoves(boardMoves, state);
 
   let bestScore: number;
   let flag: number;
+  let hasLegalMove = false;
 
   if (maximizing) {
     bestScore = -Infinity;
 
-    // Evaluate board moves first (captures first → tight bounds early)
     for (const move of orderedBoardMoves) {
-      const child = applyMove(state, move);
-      bestScore = Math.max(bestScore, minimax(child, depth - 1, alpha, beta, false, stats));
+      const score = applyAndSearch(state, move, mover, depth - 1, alpha, beta, false, stats);
+      if (score === null) continue; // illegal
+      hasLegalMove = true;
+      bestScore = Math.max(bestScore, score);
       alpha = Math.max(alpha, bestScore);
       if (alpha >= beta) break;
     }
 
-    // Evaluate draw as a single chance node competing with board moves
+    // Chance nodes search 2 plies shallower than board moves to limit
+    // the exponential branching of expectimax (14 tile types × 3-4 placements).
     if (drawOutcomes.length > 0 && alpha < beta) {
-      const drawScore = evaluateChanceNode(drawOutcomes, state, depth, alpha, beta, true, stats);
+      const drawDepth = Math.max(depth - 2, 0);
+      const drawScore = evaluateChanceNode(drawOutcomes, state, mover, drawDepth, alpha, beta, true, stats);
+      hasLegalMove = true; // placements are always legal
       bestScore = Math.max(bestScore, drawScore);
       alpha = Math.max(alpha, bestScore);
     }
+
+    if (!hasLegalMove) return -99_999; // no legal moves = loss
 
     flag = bestScore >= beta ? TT_LOWER : (bestScore <= alpha ? TT_UPPER : TT_EXACT);
   } else {
     bestScore = Infinity;
 
     for (const move of orderedBoardMoves) {
-      const child = applyMove(state, move);
-      bestScore = Math.min(bestScore, minimax(child, depth - 1, alpha, beta, true, stats));
+      const score = applyAndSearch(state, move, mover, depth - 1, alpha, beta, true, stats);
+      if (score === null) continue; // illegal
+      hasLegalMove = true;
+      bestScore = Math.min(bestScore, score);
       beta = Math.min(beta, bestScore);
       if (alpha >= beta) break;
     }
 
     if (drawOutcomes.length > 0 && alpha < beta) {
-      const drawScore = evaluateChanceNode(drawOutcomes, state, depth, alpha, beta, false, stats);
+      const drawDepth = Math.max(depth - 2, 0);
+      const drawScore = evaluateChanceNode(drawOutcomes, state, mover, drawDepth, alpha, beta, false, stats);
+      hasLegalMove = true; // placements are always legal
       bestScore = Math.min(bestScore, drawScore);
       beta = Math.min(beta, bestScore);
     }
+
+    if (!hasLegalMove) return 99_999; // no legal moves = loss
 
     flag = bestScore <= alpha ? TT_UPPER : (bestScore >= beta ? TT_LOWER : TT_EXACT);
   }
@@ -226,24 +286,28 @@ function minimax(
  * Draw moves are treated as chance nodes (expectimax).
  */
 export function findBestMove(state: GameState, depth = 6): MinimaxResult {
-  const allMoves = generateAllMoves(state);
+  // Use pseudo-legal moves — legality checked inline
+  const allMoves = generatePseudoLegalMoves(state);
   if (allMoves.length === 0) return {move: null, score: 0, nodesSearched: 0};
 
   const maximizing = state.currentPlayer === 'P1';
+  const mover = state.currentPlayer;
   const stats = {nodes: 0};
 
   const {boardMoves, drawOutcomes} = splitMoves(allMoves, state);
   const orderedBoardMoves = orderMoves(boardMoves, state);
 
-  let bestMove: GameMove = allMoves[0];
+  let bestMove: GameMove | null = null;
   let bestScore = maximizing ? -Infinity : Infinity;
   let alpha = -Infinity;
   let beta = Infinity;
 
   // Evaluate board moves with standard alpha-beta
   for (const move of orderedBoardMoves) {
-    const child = applyMove(state, move);
-    const score = minimax(child, depth - 1, alpha, beta, !maximizing, stats);
+    const score = applyAndSearch(state, move, mover, depth - 1, alpha, beta, !maximizing, stats);
+    if (score === null) continue; // illegal
+
+    if (bestMove === null) bestMove = move;
 
     if (maximizing) {
       if (score > bestScore) {
@@ -260,9 +324,9 @@ export function findBestMove(state: GameState, depth = 6): MinimaxResult {
     }
   }
 
-  // Evaluate draw as a single chance node
+  // Evaluate draw — at the root we always do the full evaluation
   if (drawOutcomes.length > 0) {
-    const drawScore = evaluateChanceNode(drawOutcomes, state, depth, alpha, beta, maximizing, stats);
+    const drawScore = evaluateChanceNode(drawOutcomes, state, mover, depth, alpha, beta, maximizing, stats);
     const drawIsBetter = maximizing ? drawScore > bestScore : drawScore < bestScore;
 
     if (drawIsBetter) {
@@ -278,8 +342,8 @@ export function findBestMove(state: GameState, depth = 6): MinimaxResult {
       let bestPlacementScore = maximizing ? -Infinity : Infinity;
 
       for (const move of tilePlacements) {
-        const child = applyMove(state, move);
-        const score = minimax(child, depth - 1, -Infinity, Infinity, !maximizing, stats);
+        const score = applyAndSearch(state, move, mover, depth - 1, -Infinity, Infinity, !maximizing, stats);
+        if (score === null) continue; // illegal
 
         if (maximizing ? score > bestPlacementScore : score < bestPlacementScore) {
           bestPlacementScore = score;

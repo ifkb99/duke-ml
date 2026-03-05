@@ -3,7 +3,7 @@ import type {
 } from './types.js';
 import {TILE_REGISTRY} from './tiles.js';
 import {BOARD_SIZE} from './state.js';
-import {applyMoveRaw} from './game.js';
+import {makeMove, unmakeMove} from './game.js';
 
 function inBounds(coord: Coord): boolean {
   return coord.row >= 0 && coord.row < BOARD_SIZE
@@ -191,25 +191,29 @@ export function generateTileMoves(state: GameState, tile: TileInstance): GameMov
   const side = tile.side === 'A' ? def.sideA : def.sideB;
   const moves: GameMove[] = [];
 
+  // Copy position so moves don't share a mutable reference with the tile.
+  // This prevents corruption when makeMove/unmakeMove mutates tile.position.
+  const pos: Coord = {row: tile.position.row, col: tile.position.col};
+
   for (const pattern of side.patterns) {
     switch (pattern.type) {
       case 'step':
-        moves.push(...generateStepMoves(state, tile.position, pattern, tile.owner));
+        moves.push(...generateStepMoves(state, pos, pattern, tile.owner));
         break;
       case 'slide':
-        moves.push(...generateSlideMoves(state, tile.position, pattern, tile.owner));
+        moves.push(...generateSlideMoves(state, pos, pattern, tile.owner));
         break;
       case 'jump':
-        moves.push(...generateJumpMoves(state, tile.position, pattern, tile.owner));
+        moves.push(...generateJumpMoves(state, pos, pattern, tile.owner));
         break;
       case 'jump_slide':
-        moves.push(...generateJumpSlideMoves(state, tile.position, pattern, tile.owner));
+        moves.push(...generateJumpSlideMoves(state, pos, pattern, tile.owner));
         break;
       case 'strike':
-        moves.push(...generateStrikeMoves(state, tile.position, pattern, tile.owner));
+        moves.push(...generateStrikeMoves(state, pos, pattern, tile.owner));
         break;
       case 'command':
-        moves.push(...generateCommandMoves(state, tile.position, pattern, tile.owner));
+        moves.push(...generateCommandMoves(state, pos, pattern, tile.owner));
         break;
     }
   }
@@ -261,6 +265,165 @@ function findDukePosition(state: GameState, player: Player): Coord | null {
 }
 
 /**
+ * Check if a specific tile can reach (attack/move to) a target square.
+ * Uses direct coordinate math — no object allocation.
+ */
+function canTileReachSquare(
+  state: GameState, tile: TileInstance, target: Coord,
+): boolean {
+  const def = TILE_REGISTRY.get(tile.defName);
+  if (!def) return false;
+
+  const side = tile.side === 'A' ? def.sideA : def.sideB;
+  const from = tile.position;
+  const dr = target.row - from.row;
+  const dc = target.col - from.col;
+  if (dr === 0 && dc === 0) return false;
+
+  const player = tile.owner;
+
+  for (const pattern of side.patterns) {
+    switch (pattern.type) {
+      case 'step': {
+        for (const offset of pattern.offsets) {
+          const adjDr = player === 'P2' ? offset.dRow : -offset.dRow;
+          const adjDc = offset.dCol;
+          if (dr === adjDr && dc === adjDc) {
+            // Check path clearance for multi-square steps
+            const g = gcd(Math.abs(adjDr), Math.abs(adjDc));
+            if (g <= 1) {
+              // Target must be empty or enemy
+              const occupant = state.board[target.row][target.col];
+              if (!occupant || state.tiles.get(occupant)!.owner !== player) return true;
+            } else {
+              const unitDr = adjDr / g;
+              const unitDc = adjDc / g;
+              let clear = true;
+              for (let i = 1; i < g; i++) {
+                const ir = from.row + unitDr * i;
+                const ic = from.col + unitDc * i;
+                if (ir < 0 || ir >= BOARD_SIZE || ic < 0 || ic >= BOARD_SIZE || state.board[ir][ic] !== null) {
+                  clear = false;
+                  break;
+                }
+              }
+              if (clear) {
+                const occupant = state.board[target.row][target.col];
+                if (!occupant || state.tiles.get(occupant)!.owner !== player) return true;
+              }
+            }
+          }
+        }
+        break;
+      }
+      case 'jump': {
+        for (const offset of pattern.offsets) {
+          const adjDr = player === 'P2' ? offset.dRow : -offset.dRow;
+          if (dr === adjDr && dc === offset.dCol) {
+            const occupant = state.board[target.row][target.col];
+            if (!occupant || state.tiles.get(occupant)!.owner !== player) return true;
+          }
+        }
+        break;
+      }
+      case 'slide': {
+        for (const dir of pattern.offsets) {
+          const adjDr = player === 'P2' ? dir.dRow : -dir.dRow;
+          const adjDc = dir.dCol;
+          // Check collinearity: dr/adjDr == dc/adjDc and same sign
+          if (adjDr === 0 && adjDc === 0) continue;
+          if (adjDr === 0) {
+            if (dr !== 0) continue;
+            if ((dc > 0) !== (adjDc > 0)) continue;
+          } else if (adjDc === 0) {
+            if (dc !== 0) continue;
+            if ((dr > 0) !== (adjDr > 0)) continue;
+          } else {
+            if (dr * adjDc !== dc * adjDr) continue; // not collinear
+            if ((dr > 0) !== (adjDr > 0)) continue;  // opposite direction
+          }
+          // Walk path from 'from' toward 'target' checking for blockers
+          let cr = from.row + adjDr;
+          let cc = from.col + adjDc;
+          let reached = false;
+          while (cr >= 0 && cr < BOARD_SIZE && cc >= 0 && cc < BOARD_SIZE) {
+            if (cr === target.row && cc === target.col) {
+              const occupant = state.board[target.row][target.col];
+              if (!occupant || state.tiles.get(occupant)!.owner !== player) reached = true;
+              break;
+            }
+            const occ = state.board[cr][cc];
+            if (occ !== null) break; // blocked
+            cr += adjDr;
+            cc += adjDc;
+          }
+          if (reached) return true;
+        }
+        break;
+      }
+      case 'jump_slide': {
+        for (const dir of pattern.offsets) {
+          const adjDr = player === 'P2' ? dir.dRow : -dir.dRow;
+          const adjDc = dir.dCol;
+          if (adjDr === 0 && adjDc === 0) continue;
+          // Check collinearity
+          if (adjDr === 0) {
+            if (dr !== 0) continue;
+            if ((dc > 0) !== (adjDc > 0)) continue;
+          } else if (adjDc === 0) {
+            if (dc !== 0) continue;
+            if ((dr > 0) !== (adjDr > 0)) continue;
+          } else {
+            if (dr * adjDc !== dc * adjDr) continue;
+            if ((dr > 0) !== (adjDr > 0)) continue;
+          }
+          // Jump_slide skips over pieces — just check target isn't friendly
+          const occupant = state.board[target.row][target.col];
+          if (!occupant || state.tiles.get(occupant)!.owner !== player) return true;
+        }
+        break;
+      }
+      case 'strike': {
+        for (const offset of pattern.offsets) {
+          const adjDr = player === 'P2' ? offset.dRow : -offset.dRow;
+          if (dr === adjDr && dc === offset.dCol) {
+            // Strike only hits enemies
+            const occupant = state.board[target.row][target.col];
+            if (occupant && state.tiles.get(occupant)!.owner !== player) return true;
+          }
+        }
+        break;
+      }
+      case 'command': {
+        // Check if any commanded friendly tile is orthogonally adjacent to target
+        for (const offset of pattern.offsets) {
+          const adjDr = player === 'P2' ? offset.dRow : -offset.dRow;
+          const cmdR = from.row + adjDr;
+          const cmdC = from.col + offset.dCol;
+          if (cmdR < 0 || cmdR >= BOARD_SIZE || cmdC < 0 || cmdC >= BOARD_SIZE) continue;
+          const cmdId = state.board[cmdR][cmdC];
+          if (!cmdId) continue;
+          const cmdTile = state.tiles.get(cmdId)!;
+          if (cmdTile.owner !== player) continue;
+          if (cmdR === from.row && cmdC === from.col) continue; // can't command self
+          // Check if target is orthogonally adjacent to commanded tile
+          const tdr = target.row - cmdR;
+          const tdc = target.col - cmdC;
+          if ((Math.abs(tdr) + Math.abs(tdc)) !== 1) continue;
+          // Can't move onto commander's square
+          if (target.row === from.row && target.col === from.col) continue;
+          // Target must be empty or enemy
+          const occupant = state.board[target.row][target.col];
+          if (!occupant || state.tiles.get(occupant)!.owner !== player) return true;
+        }
+        break;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Returns true if any tile owned by `byPlayer` can attack `square`
  * via move, strike, or command in the given state.
  */
@@ -269,12 +432,7 @@ export function isSquareAttackedBy(
 ): boolean {
   for (const tile of state.tiles.values()) {
     if (tile.owner !== byPlayer) continue;
-    const moves = generateTileMoves(state, tile);
-    for (const m of moves) {
-      if (m.type === 'move' && m.to.row === square.row && m.to.col === square.col) return true;
-      if (m.type === 'strike' && m.target.row === square.row && m.target.col === square.col) return true;
-      if (m.type === 'command' && m.targetTo.row === square.row && m.targetTo.col === square.col) return true;
-    }
+    if (canTileReachSquare(state, tile, square)) return true;
   }
   return false;
 }
@@ -293,22 +451,26 @@ export function isPlayerInCheck(state: GameState, player: Player): boolean {
  * Returns true if a pseudo-legal move doesn't leave the mover's Duke in check.
  */
 function isMoveLegal(state: GameState, move: GameMove): boolean {
-  const newState = applyMoveRaw(state, move);
-
-  // Captured enemy Duke — game is over, always legal
-  if (newState.status !== 'active') return true;
-
   const mover = state.currentPlayer;
   const opponent = mover === 'P1' ? 'P2' : 'P1';
-  const dukePos = findDukePosition(newState, mover);
-  if (!dukePos) return false;
 
-  return !isSquareAttackedBy(newState, dukePos, opponent);
+  const undo = makeMove(state, move);
+
+  // Captured enemy Duke — game is over, always legal
+  if (state.status !== 'active') {
+    unmakeMove(state, undo);
+    return true;
+  }
+
+  const dukePos = findDukePosition(state, mover);
+  const legal = dukePos ? !isSquareAttackedBy(state, dukePos, opponent) : false;
+  unmakeMove(state, undo);
+  return legal;
 }
 
 // --- Pseudo-legal move generation (no check filtering) ---
 
-function generatePseudoLegalMoves(state: GameState): GameMove[] {
+export function generatePseudoLegalMoves(state: GameState): GameMove[] {
   if (state.status !== 'active') return [];
 
   const moves: GameMove[] = [];
@@ -347,25 +509,40 @@ export function hasAnyLegalMove(state: GameState): boolean {
   const player = state.currentPlayer;
   const opponent = player === 'P1' ? 'P2' : 'P1';
 
-  // Check tile moves
+  // Collect player tiles into array to avoid iterator invalidation during make/unmake
+  const playerTiles: TileInstance[] = [];
   for (const tile of state.tiles.values()) {
-    if (tile.owner !== player) continue;
+    if (tile.owner === player) playerTiles.push(tile);
+  }
+
+  // Check tile moves
+  for (const tile of playerTiles) {
     const tileMoves = generateTileMoves(state, tile);
     for (const move of tileMoves) {
-      const newState = applyMoveRaw(state, move);
-      if (newState.status !== 'active') return true;
-      const dukePos = findDukePosition(newState, player);
-      if (dukePos && !isSquareAttackedBy(newState, dukePos, opponent)) return true;
+      const undo = makeMove(state, move);
+      if (state.status !== 'active') {
+        unmakeMove(state, undo);
+        return true;
+      }
+      const dukePos = findDukePosition(state, player);
+      const legal = dukePos && !isSquareAttackedBy(state, dukePos, opponent);
+      unmakeMove(state, undo);
+      if (legal) return true;
     }
   }
 
   // Check placement moves
   const placements = generatePlacementMoves(state);
   for (const move of placements) {
-    const newState = applyMoveRaw(state, move);
-    if (newState.status !== 'active') return true;
-    const dukePos = findDukePosition(newState, player);
-    if (dukePos && !isSquareAttackedBy(newState, dukePos, opponent)) return true;
+    const undo = makeMove(state, move);
+    if (state.status !== 'active') {
+      unmakeMove(state, undo);
+      return true;
+    }
+    const dukePos = findDukePosition(state, player);
+    const legal = dukePos && !isSquareAttackedBy(state, dukePos, opponent);
+    unmakeMove(state, undo);
+    if (legal) return true;
   }
 
   return false;

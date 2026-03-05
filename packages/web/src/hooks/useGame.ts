@@ -1,11 +1,11 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import type { Coord, GameMove, GameState, Player, SetupPhase, TileInstance } from '@the-duke/engine';
+import {useState, useCallback, useEffect, useRef, useMemo} from 'react';
+import type {Coord, GameMove, GameState, Player, SetupPhase, TileInstance} from '@the-duke/engine';
 import {
   createInitialState, generateAllMoves, generateTileMoves, applyMove,
-  getSetupTargets, applySetupPlacement, isPlayerInCheck,
+  getSetupTargets, applySetupPlacement, isPlayerInCheck, serialize,
 } from '@the-duke/engine';
-import { pickRandomMove, findBestMove } from '@the-duke/ai';
-import type { GameMode } from '../App.js';
+import type {AIWorkerRequest, AIWorkerResponse} from '../workers/ai.worker.js';
+import type {GameMode} from '../App.js';
 
 const SETUP_LABELS: Record<SetupPhase, string> = {
   p1_duke: 'Light: Place your Duke on the back row',
@@ -20,7 +20,7 @@ export interface UseGameReturn {
   state: GameState;
   selectedTile: Coord | null;
   selectedTileInstance: TileInstance | null;
-  viewingBagTile: { name: string; owner: Player } | null;
+  viewingBagTile: {name: string; owner: Player} | null;
   legalMoves: GameMove[];
   onCellClick: (coord: Coord) => void;
   onBagTileClick: (name: string, owner: Player) => void;
@@ -52,7 +52,7 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
   const [state, setState] = useState<GameState>(() => createInitialState());
   const [history, setHistory] = useState<GameState[]>([]);
   const [selectedTile, setSelectedTile] = useState<Coord | null>(null);
-  const [viewingBagTile, setViewingBagTile] = useState<{ name: string; owner: Player } | null>(null);
+  const [viewingBagTile, setViewingBagTile] = useState<{name: string; owner: Player} | null>(null);
   const [drawMode, setDrawMode] = useState(false);
   const [selectedDrawTile, setSelectedDrawTile] = useState<string | null>(null);
   const [commandTarget, setCommandTarget] = useState<Coord | null>(null);
@@ -126,9 +126,9 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
   }, [selectedTile, state, drawMode, isSetup]);
 
   // Show-all-moves: compute all squares targeted by friendly and enemy pieces
-  const { allFriendlyTargets, allEnemyTargets } = useMemo(() => {
+  const {allFriendlyTargets, allEnemyTargets} = useMemo(() => {
     if (!showAllMoves || isSetup || state.status !== 'active') {
-      return { allFriendlyTargets: [] as Coord[], allEnemyTargets: [] as Coord[] };
+      return {allFriendlyTargets: [] as Coord[], allEnemyTargets: [] as Coord[]};
     }
     const player = state.currentPlayer;
     const opponent = player === 'P1' ? 'P2' : 'P1';
@@ -156,7 +156,7 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
         }
       }
     }
-    return { allFriendlyTargets: friendlyCoords, allEnemyTargets: enemyCoords };
+    return {allFriendlyTargets: friendlyCoords, allEnemyTargets: enemyCoords};
   }, [showAllMoves, state, isSetup]);
 
   const toggleShowAllMoves = useCallback(() => {
@@ -218,8 +218,22 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
     if (drawMode || isSetup) return;
     setSelectedTile(null);
     setCommandTarget(null);
-    setViewingBagTile({ name, owner });
+    setViewingBagTile({name, owner});
   }, [drawMode, isSetup]);
+
+  // Web Worker for AI
+  const workerRef = useRef<Worker | null>(null);
+  useEffect(() => {
+    const worker = new Worker(
+      new URL('../workers/ai.worker.ts', import.meta.url),
+      {type: 'module'},
+    );
+    workerRef.current = worker;
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, []);
 
   // AI turn logic — covers both setup and normal play
   useEffect(() => {
@@ -227,7 +241,7 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
     if (state.currentPlayer !== aiPlayer) return;
     if (aiThinking.current) return;
 
-    // Setup phase AI
+    // Setup phase AI — trivial, stays on main thread
     if (isSetup && setupTargets.length > 0) {
       aiThinking.current = true;
       const timer = setTimeout(() => {
@@ -236,29 +250,38 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
         setState(applySetupPlacement(state, pick));
         aiThinking.current = false;
       }, 300);
-      return () => { clearTimeout(timer); aiThinking.current = false; };
+      return () => {clearTimeout(timer); aiThinking.current = false;};
     }
 
-    // Normal play AI
+    // Normal play AI — offload to worker
     if (state.status !== 'active') return;
-    aiThinking.current = true;
-    const timer = setTimeout(() => {
-      let move: GameMove | null = null;
-      if (mode === 'vs-random') {
-        move = pickRandomMove(state);
-      } else if (mode === 'vs-minimax') {
-        const result = findBestMove(state, 3);
-        move = result.move;
-      }
+    const worker = workerRef.current;
+    if (!worker) return;
 
+    aiThinking.current = true;
+
+    const msg: AIWorkerRequest = {
+      type: mode === 'vs-random' ? 'pickRandomMove' : 'findBestMove',
+      state: serialize(state),
+      depth: mode === 'vs-minimax' ? 6 : undefined,
+    };
+
+    const onMessage = (e: MessageEvent<AIWorkerResponse>) => {
+      const {move} = e.data;
       if (move) {
         setHistory(prev => [...prev, state]);
-        setState(applyMove(state, move!));
+        setState(applyMove(state, move));
       }
       aiThinking.current = false;
-    }, 300);
+    };
 
-    return () => { clearTimeout(timer); aiThinking.current = false; };
+    worker.addEventListener('message', onMessage);
+    worker.postMessage(msg);
+
+    return () => {
+      worker.removeEventListener('message', onMessage);
+      aiThinking.current = false;
+    };
   }, [state, mode, aiPlayer, isSetup, setupTargets]);
 
   const onCellClick = useCallback((coord: Coord) => {

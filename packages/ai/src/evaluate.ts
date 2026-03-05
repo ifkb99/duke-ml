@@ -43,8 +43,12 @@ export function evaluate(state: GameState): number {
   // Tile on the board is worth two in the bush [bag]
   // does bag len consider pieces with multiple copies?
   // in calc if bag is drawn from does it calc w/ a piece it draws or a superposition of all the pieces in the bag? is the num of pieces in bag changed?
-  const bagScoreP1 = state.bags.P1.reduce((acc, name) => acc + (TILE_VALUES.get(name) ?? 1), 0) / state.bags.P1.length;
-  const bagScoreP2 = state.bags.P2.reduce((acc, name) => acc + (TILE_VALUES.get(name) ?? 1), 0) / state.bags.P2.length;
+  const bagScoreP1 = state.bags.P1.length > 0
+    ? state.bags.P1.reduce((acc, name) => acc + (TILE_VALUES.get(name) ?? 1), 0) / state.bags.P1.length
+    : 0;
+  const bagScoreP2 = state.bags.P2.length > 0
+    ? state.bags.P2.reduce((acc, name) => acc + (TILE_VALUES.get(name) ?? 1), 0) / state.bags.P2.length
+    : 0;
   score += bagScoreP1 * 2 - bagScoreP2 * 2;
 
   // Center control bonus — tiles near center are slightly better

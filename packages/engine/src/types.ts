@@ -64,6 +64,30 @@ export type GameMove =
   | { type: 'strike'; from: Coord; target: Coord }
   | { type: 'command'; commander: Coord; target: Coord; targetTo: Coord };
 
+export interface UndoRecord {
+  move: GameMove;
+  prevCurrentPlayer: Player;
+  prevTurnNumber: number;
+  prevStatus: GameStatus;
+  // The moved/acting tile
+  movedTileId: string | null;
+  prevSide: Side | null;
+  prevPosition: Coord | null;
+  // Captured tile (if any)
+  capturedTileId: string | null;
+  capturedTile: TileInstance | null;
+  // Placed tile (if any — from bag)
+  placedTileId: string | null;
+  removedFromBag: { player: Player; name: string; index: number } | null;
+  // Commanded tile info
+  commandedTileId: string | null;
+  commandedPrevSide: Side | null;
+  commandedPrevPosition: Coord | null;
+  // Capture from command destination
+  commandCapturedTileId: string | null;
+  commandCapturedTile: TileInstance | null;
+}
+
 export interface SerializedGameState {
   board: (string | null)[][];
   tiles: [string, TileInstance][];
