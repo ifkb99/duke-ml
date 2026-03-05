@@ -227,7 +227,7 @@ export function Tile({ tile }: TileProps) {
   const side = def ? (isSideB ? def.sideB : def.sideA) : null;
   const flip = isP1;
   const shiftedCenter = needsShiftedCenter(tile.defName, tile.side);
-  const centerRow = shiftedCenter ? 3 : CENTER;
+  const centerRow = shiftedCenter ? (isP1 ? 1 : 3) : CENTER;
 
   const bg = isP1
     ? 'linear-gradient(155deg, #0c3460 0%, #164d8a 45%, #2066a8 100%)'
