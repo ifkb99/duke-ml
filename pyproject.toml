@@ -1,0 +1,11 @@
+[project]
+name = "duke-ml"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "flax>=0.12.5",
+    "jax[cuda13]>=0.9.1",
+    "optax>=0.2.6",
+]
