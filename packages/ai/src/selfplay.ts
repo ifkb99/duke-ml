@@ -1,5 +1,6 @@
-import type {GameMove, GameState, SerializedGameState} from '@the-duke/engine';
-import {applySetupPlacement, createInitialState, generateAllMoves, applyMove, serialize} from '@the-duke/engine';
+import type {Coord, GameMove, GameState, SerializedGameState} from '@the-duke/engine';
+import {applySetupPlacement, createInitialState, generateAllMoves, applyMove, getSetupTargets, serialize} from '@the-duke/engine';
+import {evaluate} from './evaluate.js';
 import {findBestMove, ttClear} from './minimax.js';
 
 export interface TrainingSample {
@@ -18,21 +19,49 @@ export interface SelfPlayResult {
 export interface SelfPlayOptions {
   depth?: number;
   maxTurns?: number;
-  /** Fixed setup positions [p1Duke, p1Foot1, p1Foot2, p2Duke, p2Foot1, p2Foot2] */
-  setupCoords?: {row: number; col: number}[];
 }
 
-const DEFAULT_SETUPS: {row: number; col: number}[][] = [
-  [{row: 0, col: 2}, {row: 0, col: 1}, {row: 1, col: 2}, {row: 5, col: 3}, {row: 5, col: 4}, {row: 4, col: 3}],
-  [{row: 0, col: 3}, {row: 0, col: 2}, {row: 1, col: 3}, {row: 5, col: 2}, {row: 5, col: 3}, {row: 4, col: 2}],
-  [{row: 0, col: 1}, {row: 0, col: 0}, {row: 1, col: 1}, {row: 5, col: 4}, {row: 5, col: 5}, {row: 4, col: 4}],
-  [{row: 0, col: 4}, {row: 0, col: 3}, {row: 1, col: 4}, {row: 5, col: 1}, {row: 5, col: 2}, {row: 4, col: 1}],
-];
+// ---------------------------------------------------------------------------
+// Setup phase — minimax over placement tree
+// P1 maximizes, P2 minimizes. Uses static eval at the leaf (all 6 pieces placed).
+// Branching factor: Duke ~6, Footmen ~4 each → max ~5K leaves, instant to search.
+// ---------------------------------------------------------------------------
 
-function setupGame(coords?: {row: number; col: number}[]): GameState {
-  const setup = coords ?? DEFAULT_SETUPS[Math.floor(Math.random() * DEFAULT_SETUPS.length)];
+const SETUP_MAXIMIZING: Record<string, boolean> = {
+  p1_duke: true, p1_footman1: true, p1_footman2: true,
+  p2_duke: false, p2_footman1: false, p2_footman2: false,
+};
+
+function setupMinimax(state: GameState): {score: number; coord: Coord | null} {
+  if (state.status === 'active') {
+    return {score: evaluate(state), coord: null};
+  }
+
+  const targets = getSetupTargets(state);
+  if (targets.length === 0) return {score: evaluate(state), coord: null};
+
+  const maximizing = SETUP_MAXIMIZING[state.setupPhase!] ?? true;
+  let bestScore = maximizing ? -Infinity : Infinity;
+  let bestCoord: Coord = targets[0];
+
+  for (const coord of targets) {
+    const next = applySetupPlacement(state, coord);
+    const {score} = setupMinimax(next);
+
+    if (maximizing ? score > bestScore : score < bestScore) {
+      bestScore = score;
+      bestCoord = coord;
+    }
+  }
+
+  return {score: bestScore, coord: bestCoord};
+}
+
+function setupGameWithMinimax(): GameState {
   let state = createInitialState();
-  for (const coord of setup) {
+  while (state.status === 'setup') {
+    const {coord} = setupMinimax(state);
+    if (!coord) break;
     state = applySetupPlacement(state, coord);
   }
   return state;
@@ -40,6 +69,7 @@ function setupGame(coords?: {row: number; col: number}[]): GameState {
 
 /**
  * Play a complete self-play game using minimax for both sides.
+ * Setup placements are chosen by minimax over the setup tree.
  * Returns training samples with retroactively-filled outcomes.
  */
 export function selfPlay(options: SelfPlayOptions = {}): SelfPlayResult {
@@ -48,7 +78,7 @@ export function selfPlay(options: SelfPlayOptions = {}): SelfPlayResult {
 
   ttClear();
 
-  let state = setupGame(options.setupCoords);
+  let state = setupGameWithMinimax();
   const pendingSamples: {state: SerializedGameState; move: GameMove}[] = [];
 
   for (let turn = 0; turn < maxTurns; turn++) {
