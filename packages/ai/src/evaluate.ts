@@ -1,4 +1,5 @@
 import { ALL_TILES, type GameState, type MoveType, type TileDefinition } from '@the-duke/engine';
+import { TILE_NAME_INDEX } from './utils/zobrist.js';
 
 const MOVE_TYPE_VALUES: Record<MoveType, number> = {
   step: 1,
@@ -9,16 +10,22 @@ const MOVE_TYPE_VALUES: Record<MoveType, number> = {
   command: 1,
 };
 
-/**
- * Tile is worth the score of amount of moves it can make on side A and side B
- * starting side weighted slightly higher
- */
 const scoreTile = (tile: TileDefinition) => {
-  return tile.sideA.patterns.reduce((acc, pattern) => acc + MOVE_TYPE_VALUES[pattern.type] * pattern.offsets.length, 0) * 0.55 +
-    tile.sideB.patterns.reduce((acc, pattern) => acc + MOVE_TYPE_VALUES[pattern.type] * pattern.offsets.length, 0) * 0.45;
+  return tile.sideA.patterns.reduce((acc, p) => acc + MOVE_TYPE_VALUES[p.type] * p.offsets.length, 0) * 0.55 +
+    tile.sideB.patterns.reduce((acc, p) => acc + MOVE_TYPE_VALUES[p.type] * p.offsets.length, 0) * 0.45;
 };
 
-const TILE_VALUES: ReadonlyMap<string, number> = new Map(ALL_TILES.map(tile => [tile.name, scoreTile(tile)]));
+// Flat array indexed by tile name index for O(1) lookups
+const TILE_VALUES_BY_INDEX = new Float64Array(ALL_TILES.length);
+for (const tile of ALL_TILES) {
+  const idx = TILE_NAME_INDEX.get(tile.name)!;
+  TILE_VALUES_BY_INDEX[idx] = scoreTile(tile);
+}
+
+function tileValue(defName: string): number {
+  const idx = TILE_NAME_INDEX.get(defName);
+  return idx !== undefined ? TILE_VALUES_BY_INDEX[idx] : 1;
+}
 
 /**
  * Evaluate the board from P1's perspective.
@@ -30,33 +37,32 @@ export function evaluate(state: GameState): number {
 
   let score = 0;
 
-  // Material on board
+  // Material + center control in a single pass over tiles
   for (const tile of state.tiles.values()) {
-    const value = TILE_VALUES.get(tile.defName) ?? 1;
-    const multiplier = tile.owner === 'P1' ? 1 : -1;
-    score += value * multiplier;
-  }
-
-  // Bag material (tiles in bag are worth less than tiles on board)
-  // TODO: bag score should be sum(bag_piece_scores) / n_pieces_in_bag so likelihood of drawing a good tile is factored in
-  //    BUT we also need to consider the fact that the pieces in bag are not in play.
-  // Tile on the board is worth two in the bush [bag]
-  // does bag len consider pieces with multiple copies?
-  // in calc if bag is drawn from does it calc w/ a piece it draws or a superposition of all the pieces in the bag? is the num of pieces in bag changed?
-  const bagScoreP1 = state.bags.P1.length > 0
-    ? state.bags.P1.reduce((acc, name) => acc + (TILE_VALUES.get(name) ?? 1), 0) / state.bags.P1.length
-    : 0;
-  const bagScoreP2 = state.bags.P2.length > 0
-    ? state.bags.P2.reduce((acc, name) => acc + (TILE_VALUES.get(name) ?? 1), 0) / state.bags.P2.length
-    : 0;
-  score += bagScoreP1 * 2 - bagScoreP2 * 2;
-
-  // Center control bonus — tiles near center are slightly better
-  for (const tile of state.tiles.values()) {
+    const value = tileValue(tile.defName);
     const centerDist = Math.abs(tile.position.row - 2.5) + Math.abs(tile.position.col - 2.5);
-    const bonus = (5 - centerDist) * 0.1;
+    const bonus = value + (5 - centerDist) * 0.1;
     score += tile.owner === 'P1' ? bonus : -bonus;
   }
 
+  // Bag material — averaged value of tiles in each bag
+  const bagP1 = state.bags.P1;
+  const bagP2 = state.bags.P2;
+  if (bagP1.length > 0) {
+    let sum = 0;
+    for (let i = 0; i < bagP1.length; i++) sum += tileValue(bagP1[i]);
+    score += (sum / bagP1.length) * 2;
+  }
+  if (bagP2.length > 0) {
+    let sum = 0;
+    for (let i = 0; i < bagP2.length; i++) sum += tileValue(bagP2[i]);
+    score -= (sum / bagP2.length) * 2;
+  }
+
   return score;
+}
+
+/** Fast static score for a single placement (used for placement pruning). */
+export function evaluatePlacement(state: GameState, defName: string): number {
+  return tileValue(defName);
 }

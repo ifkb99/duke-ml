@@ -1,12 +1,19 @@
-import type {GameState} from '@the-duke/engine';
+import type {GameState, UndoRecord} from '@the-duke/engine';
 import {ALL_TILES} from '@the-duke/engine';
 
 // ---------------------------------------------------------------------------
-// Zobrist hashing for transposition table
+// Shared tile name → index mapping (used by evaluate.ts too)
 // ---------------------------------------------------------------------------
 
-// Generate deterministic pseudo-random 32-bit keys using a simple xorshift PRNG
-// (32-bit is fine — collisions are rare enough for a 6×6 board)
+const TILE_NAMES = ALL_TILES.map(t => t.name);
+export const TILE_NAME_INDEX: ReadonlyMap<string, number> = new Map(
+  TILE_NAMES.map((n, i) => [n, i]),
+);
+
+// ---------------------------------------------------------------------------
+// Zobrist hashing
+// ---------------------------------------------------------------------------
+
 function makeZobristKeys() {
   let seed = 0xDEAD_BEEF;
   function rand32(): number {
@@ -16,29 +23,24 @@ function makeZobristKeys() {
     return seed >>> 0;
   }
 
-  const tileNames = ALL_TILES.map(t => t.name);
-  const tileIndex = new Map(tileNames.map((n, i) => [n, i]));
-
-  // board[row][col][tileNameIdx][ownerIdx][sideIdx]
-  // 6 * 6 * 15 tiles * 2 owners * 2 sides = 2160 keys
+  // board[row][col][tileNameIdx][combo] where combo = ownerBit*2 + sideBit
+  // 6 * 6 * 15 tiles * 4 combos = 2160 keys
   const board: number[][][][] = [];
   for (let r = 0; r < 6; r++) {
     board[r] = [];
     for (let c = 0; c < 6; c++) {
       board[r][c] = [];
-      for (let t = 0; t < tileNames.length; t++) {
+      for (let t = 0; t < TILE_NAMES.length; t++) {
         board[r][c][t] = [rand32(), rand32(), rand32(), rand32()];
-        // index: owner(0=P1,1=P2) * 2 + side(0=A,1=B)
       }
     }
   }
 
-  const turnKey = rand32(); // XOR when currentPlayer === 'P2'
+  const turnKey = rand32();
 
-  // Bag keys: bagKeys[tileNameIdx][playerIdx][count]
-  // Max 3 copies of any tile in bag (Footman x3, Pikeman x3)
+  // bagKeys[tileNameIdx][playerIdx][count] — max 3 copies
   const bagKeys: number[][][] = [];
-  for (let t = 0; t < tileNames.length; t++) {
+  for (let t = 0; t < TILE_NAMES.length; t++) {
     bagKeys[t] = [];
     for (let p = 0; p < 2; p++) {
       bagKeys[t][p] = [];
@@ -48,80 +50,218 @@ function makeZobristKeys() {
     }
   }
 
-  return {board, turnKey, tileIndex, bagKeys};
+  return {board, turnKey, bagKeys};
 }
 
-const ZOBRIST = makeZobristKeys();
+const Z = makeZobristKeys();
 
-// Pre-allocated array for bag counting — avoids Map allocation per call.
-// Indexed by [tileNameIdx * 2 + playerIdx], stores count.
+// Pre-allocated array for bag counting
 const _bagCounts = new Int8Array(ALL_TILES.length * 2);
 
 export function hashState(state: GameState): number {
   let h = 0;
   for (const tile of state.tiles.values()) {
-    const ti = ZOBRIST.tileIndex.get(tile.defName);
+    const ti = TILE_NAME_INDEX.get(tile.defName);
     if (ti === undefined) continue;
-    const ownerBit = tile.owner === 'P1' ? 0 : 1;
-    const sideBit = tile.side === 'A' ? 0 : 1;
-    h ^= ZOBRIST.board[tile.position.row][tile.position.col][ti][ownerBit * 2 + sideBit];
+    const combo = (tile.owner === 'P1' ? 0 : 2) + (tile.side === 'A' ? 0 : 1);
+    h ^= Z.board[tile.position.row][tile.position.col][ti][combo];
   }
-  if (state.currentPlayer === 'P2') h ^= ZOBRIST.turnKey;
+  if (state.currentPlayer === 'P2') h ^= Z.turnKey;
 
-  // Hash bag contents using pre-allocated count array (no Map allocation)
   _bagCounts.fill(0);
   for (const name of state.bags.P1) {
-    const ti = ZOBRIST.tileIndex.get(name);
+    const ti = TILE_NAME_INDEX.get(name);
     if (ti !== undefined) _bagCounts[ti * 2]++;
   }
   for (const name of state.bags.P2) {
-    const ti = ZOBRIST.tileIndex.get(name);
+    const ti = TILE_NAME_INDEX.get(name);
     if (ti !== undefined) _bagCounts[ti * 2 + 1]++;
   }
   const numTiles = ALL_TILES.length;
   for (let ti = 0; ti < numTiles; ti++) {
-    h ^= ZOBRIST.bagKeys[ti][0][_bagCounts[ti * 2]];
-    h ^= ZOBRIST.bagKeys[ti][1][_bagCounts[ti * 2 + 1]];
+    h ^= Z.bagKeys[ti][0][_bagCounts[ti * 2]];
+    h ^= Z.bagKeys[ti][1][_bagCounts[ti * 2 + 1]];
   }
 
   return h;
 }
 
 // ---------------------------------------------------------------------------
-// Transposition table
+// Incremental hash update — call after makeMove, returns new hash.
+// XOR is self-inverse, so the same delta undoes itself.
+// ---------------------------------------------------------------------------
+
+function countTileInBag(bag: string[], tileName: string): number {
+  let c = 0;
+  for (let i = 0; i < bag.length; i++) {
+    if (bag[i] === tileName) c++;
+  }
+  return c;
+}
+
+/**
+ * Compute the new hash after makeMove was applied.
+ * `undo` is the UndoRecord returned by makeMove; `state` is the post-move state.
+ */
+export function hashAfterMove(oldHash: number, state: GameState, undo: UndoRecord): number {
+  let h = oldHash ^ Z.turnKey; // turn always switches
+
+  const move = undo.move;
+
+  switch (move.type) {
+    case 'place': {
+      const tile = state.tiles.get(undo.placedTileId!)!;
+      const ti = TILE_NAME_INDEX.get(tile.defName)!;
+      const combo = (tile.owner === 'P1' ? 0 : 2); // side always A → +0
+      h ^= Z.board[tile.position.row][tile.position.col][ti][combo];
+
+      const playerIdx = undo.removedFromBag!.player === 'P1' ? 0 : 1;
+      const newCount = countTileInBag(state.bags[undo.removedFromBag!.player], tile.defName);
+      h ^= Z.bagKeys[ti][playerIdx][newCount + 1]; // XOR out old count
+      h ^= Z.bagKeys[ti][playerIdx][newCount];      // XOR in new count
+      break;
+    }
+    case 'move': {
+      const tile = state.tiles.get(undo.movedTileId!)!;
+      const ti = TILE_NAME_INDEX.get(tile.defName)!;
+      const ownerBase = tile.owner === 'P1' ? 0 : 2;
+      const oldSideBit = undo.prevSide === 'A' ? 0 : 1;
+      const newSideBit = tile.side === 'A' ? 0 : 1;
+      const oldPos = undo.prevPosition!;
+
+      h ^= Z.board[oldPos.row][oldPos.col][ti][ownerBase + oldSideBit];
+      h ^= Z.board[tile.position.row][tile.position.col][ti][ownerBase + newSideBit];
+
+      if (undo.capturedTile) {
+        const cap = undo.capturedTile;
+        const capTi = TILE_NAME_INDEX.get(cap.defName)!;
+        const capCombo = (cap.owner === 'P1' ? 0 : 2) + (cap.side === 'A' ? 0 : 1);
+        h ^= Z.board[cap.position.row][cap.position.col][capTi][capCombo];
+      }
+      break;
+    }
+    case 'strike': {
+      const striker = state.tiles.get(undo.movedTileId!)!;
+      const ti = TILE_NAME_INDEX.get(striker.defName)!;
+      const ownerBase = striker.owner === 'P1' ? 0 : 2;
+      const oldSideBit = undo.prevSide === 'A' ? 0 : 1;
+      const newSideBit = striker.side === 'A' ? 0 : 1;
+
+      // Striker stays in place but flips side
+      h ^= Z.board[striker.position.row][striker.position.col][ti][ownerBase + oldSideBit];
+      h ^= Z.board[striker.position.row][striker.position.col][ti][ownerBase + newSideBit];
+
+      const cap = undo.capturedTile!;
+      const capTi = TILE_NAME_INDEX.get(cap.defName)!;
+      const capCombo = (cap.owner === 'P1' ? 0 : 2) + (cap.side === 'A' ? 0 : 1);
+      h ^= Z.board[cap.position.row][cap.position.col][capTi][capCombo];
+      break;
+    }
+    case 'command': {
+      const commanded = state.tiles.get(undo.commandedTileId!)!;
+      const ti = TILE_NAME_INDEX.get(commanded.defName)!;
+      const ownerBase = commanded.owner === 'P1' ? 0 : 2;
+      const oldSideBit = undo.commandedPrevSide === 'A' ? 0 : 1;
+      const newSideBit = commanded.side === 'A' ? 0 : 1;
+      const oldPos = undo.commandedPrevPosition!;
+
+      h ^= Z.board[oldPos.row][oldPos.col][ti][ownerBase + oldSideBit];
+      h ^= Z.board[commanded.position.row][commanded.position.col][ti][ownerBase + newSideBit];
+
+      if (undo.commandCapturedTile) {
+        const cap = undo.commandCapturedTile;
+        const capTi = TILE_NAME_INDEX.get(cap.defName)!;
+        const capCombo = (cap.owner === 'P1' ? 0 : 2) + (cap.side === 'A' ? 0 : 1);
+        h ^= Z.board[cap.position.row][cap.position.col][capTi][capCombo];
+      }
+      break;
+    }
+  }
+
+  return h;
+}
+
+// ---------------------------------------------------------------------------
+// Transposition table — flat typed arrays, GC-free, SharedArrayBuffer-ready
 // ---------------------------------------------------------------------------
 
 export const TT_EXACT = 0;
-export const TT_LOWER = 1; // alpha cutoff — score is a lower bound
-export const TT_UPPER = 2; // beta cutoff  — score is an upper bound
+export const TT_LOWER = 1;
+export const TT_UPPER = 2;
 
-interface TTEntry {
-  hash: number;
-  depth: number;
-  score: number;
-  flag: number;
-}
-
-// Fixed-size table (power of 2 for fast masking)
 const TT_SIZE = 1 << 20; // ~1M entries
 const TT_MASK = TT_SIZE - 1;
-const tt: (TTEntry | null)[] = new Array(TT_SIZE).fill(null);
+
+const TT_HASH  = new Int32Array(TT_SIZE);
+const TT_DEPTH = new Int16Array(TT_SIZE);
+const TT_SCORE = new Float32Array(TT_SIZE);
+const TT_FLAG  = new Uint8Array(TT_SIZE);
+const TT_MOVE  = new Int32Array(TT_SIZE); // encoded best move
+
+// Sentinel: depth -1 means empty slot
+TT_DEPTH.fill(-1);
 
 export function ttProbe(hash: number, depth: number, alpha: number, beta: number): number | null {
-  const entry = tt[hash & TT_MASK];
-  if (entry === null || entry.hash !== hash || entry.depth < depth) return null;
+  const idx = hash & TT_MASK;
+  if (TT_DEPTH[idx] < 0 || TT_HASH[idx] !== hash || TT_DEPTH[idx] < depth) return null;
 
-  if (entry.flag === TT_EXACT) return entry.score;
-  if (entry.flag === TT_LOWER && entry.score >= beta) return entry.score;
-  if (entry.flag === TT_UPPER && entry.score <= alpha) return entry.score;
+  const flag = TT_FLAG[idx];
+  const score = TT_SCORE[idx];
+  if (flag === TT_EXACT) return score;
+  if (flag === TT_LOWER && score >= beta) return score;
+  if (flag === TT_UPPER && score <= alpha) return score;
   return null;
 }
 
-export function ttStore(hash: number, depth: number, score: number, flag: number): void {
+/** Retrieve the best move encoded in the TT for move ordering. Returns 0 if none. */
+export function ttProbeMove(hash: number): number {
   const idx = hash & TT_MASK;
-  const existing = tt[idx];
-  // Replace if empty or if new entry has >= depth (depth-preferred replacement)
-  if (existing === null || existing.depth <= depth) {
-    tt[idx] = {hash, depth, score, flag};
+  if (TT_HASH[idx] !== hash || TT_DEPTH[idx] < 0) return 0;
+  return TT_MOVE[idx];
+}
+
+export function ttStore(hash: number, depth: number, score: number, flag: number, encodedMove: number): void {
+  const idx = hash & TT_MASK;
+  if (TT_DEPTH[idx] < 0 || TT_DEPTH[idx] <= depth) {
+    TT_HASH[idx] = hash;
+    TT_DEPTH[idx] = depth;
+    TT_SCORE[idx] = score;
+    TT_FLAG[idx] = flag;
+    TT_MOVE[idx] = encodedMove;
   }
+}
+
+export function ttClear(): void {
+  TT_DEPTH.fill(-1);
+  TT_HASH.fill(0);
+  TT_SCORE.fill(0);
+  TT_FLAG.fill(0);
+  TT_MOVE.fill(0);
+}
+
+// ---------------------------------------------------------------------------
+// Move encoding — pack a GameMove into a 32-bit integer for TT storage
+// Type (3 bits) | row1 (3) | col1 (3) | row2 (3) | col2 (3) | row3 (3) | col3 (3) | tileIdx (4)
+// ---------------------------------------------------------------------------
+
+export function encodeMove(move: import('@the-duke/engine').GameMove): number {
+  switch (move.type) {
+    case 'place': {
+      const ti = TILE_NAME_INDEX.get(move.tileName) ?? 0;
+      return 1 | (move.position.row << 3) | (move.position.col << 6) | (ti << 21);
+    }
+    case 'move':
+      return 2 | (move.from.row << 3) | (move.from.col << 6) | (move.to.row << 9) | (move.to.col << 12);
+    case 'strike':
+      return 3 | (move.from.row << 3) | (move.from.col << 6) | (move.target.row << 9) | (move.target.col << 12);
+    case 'command':
+      return 4 | (move.commander.row << 3) | (move.commander.col << 6)
+        | (move.target.row << 9) | (move.target.col << 12)
+        | (move.targetTo.row << 15) | (move.targetTo.col << 18);
+  }
+}
+
+export function movesMatch(move: import('@the-duke/engine').GameMove, encoded: number): boolean {
+  if (encoded === 0) return false;
+  return encodeMove(move) === encoded;
 }
