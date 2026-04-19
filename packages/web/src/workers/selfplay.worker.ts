@@ -1,10 +1,10 @@
-import type {SelfPlayResult, SelfPlayOptions} from '@the-duke/ai';
+import type {SelfPlayResult, SelfPlayConfig} from '@the-duke/ai';
 import {selfPlay} from '@the-duke/ai';
 
 export interface SelfPlayWorkerRequest {
   type: 'runGames';
   count: number;
-  options?: SelfPlayOptions;
+  options?: SelfPlayConfig;
 }
 
 export interface SelfPlayWorkerResponse {
@@ -30,8 +30,8 @@ self.onmessage = (e: MessageEvent<SelfPlayWorkerRequest>) => {
   let draws = 0;
 
   for (let i = 0; i < count; i++) {
-    const result = selfPlay(options);
-    totalSamples += result.samples.length;
+    const result = selfPlay(options ?? {});
+    totalSamples += result.numSamples;
 
     if (result.outcome === 1) p1Wins++;
     else if (result.outcome === -1) p2Wins++;

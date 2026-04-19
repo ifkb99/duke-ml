@@ -5,3 +5,5 @@ dist/
 .env
 .DS_Store
 coverage/
+training/*.bin
+training/checkpoints/

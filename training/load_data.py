@@ -10,7 +10,9 @@ Usage:
 """
 
 import sys
+import os
 from pathlib import Path
+from typing import TypedDict
 
 import numpy as np
 import jax.numpy as jnp
@@ -33,7 +35,13 @@ TILE_NAMES = [
 ]
 
 
-def load_selfplay(path: str | Path) -> dict:
+class SelfPlayData(TypedDict):
+    boards: jnp.ndarray
+    bags: jnp.ndarray
+    actions: jnp.ndarray
+    values: jnp.ndarray
+
+def load_selfplay(path: str | Path) -> SelfPlayData:
     """Load a binary self-play file into JAX arrays.
 
     Returns a dict with:
@@ -55,9 +63,8 @@ def load_selfplay(path: str | Path) -> dict:
 
     return {'boards': boards, 'bags': bags, 'actions': actions, 'values': values}
 
-
 if __name__ == '__main__':
-    path = sys.argv[1] if len(sys.argv) > 1 else 'selfplay.bin'
+    path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), 'selfplay.bin')
 
     if not Path(path).exists():
         print(f'File not found: {path}')
