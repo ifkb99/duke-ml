@@ -7,3 +7,5 @@ dist/
 coverage/
 training/*.bin
 training/checkpoints/
+**/__pycache__/**
+.pyc

@@ -78,6 +78,8 @@ from training.supervised.model import DukeNet
 #       return total_loss, {'policy_loss': ..., 'value_loss': ...}
 # ---------------------------------------------------------------------------
 
+VALUE_LOSS_WEIGHT = 5.0
+
 def compute_loss(model, boards, bags, actions, values):
     """Compute combined policy + value loss.
 
@@ -95,7 +97,7 @@ def compute_loss(model, boards, bags, actions, values):
     logits, pred_values = model(boards, bags)
     policy_loss = optax.softmax_cross_entropy_with_integer_labels(logits, actions).mean()
     value_loss = jnp.mean((pred_values - values) ** 2)
-    total_loss = policy_loss + value_loss
+    total_loss = policy_loss + VALUE_LOSS_WEIGHT * value_loss
     return total_loss, {'policy_loss': policy_loss, 'value_loss': value_loss}
 
 # ---------------------------------------------------------------------------
@@ -192,14 +194,14 @@ TRAIN_SPLIT = 0.9
 CHECKPOINT_EVERY = 5
 
 
-def save_checkpoint(checkpointer: ocp.StandardCheckpointer, model: DukeNet, ckpt_dir: Path, step: int):
+def save_checkpoint(checkpointer: ocp.StandardCheckpointer, model: DukeNet, ckpt_dir: Path, step: int | str):
     """Save model state with Orbax, filtering out non-serializable RNG keys."""
     _, _, saveable_state = nnx.split(model, nnx.RngState, ...)
     checkpointer.save(ckpt_dir / f'epoch_{step}', saveable_state, force=True)
     checkpointer.wait_until_finished()
 
 
-def load_checkpoint(ckpt_dir: Path, step: int) -> DukeNet:
+def load_checkpoint(ckpt_dir: Path, step: int | str) -> DukeNet:
     """Restore a DukeNet from an Orbax checkpoint."""
     ckpt_dir = ckpt_dir.resolve()
     model = DukeNet(rngs=nnx.Rngs(0))
@@ -224,14 +226,33 @@ def train(data_path: str, epochs: int = 50, batch_size: int = 256, lr: float = 1
     train_actions, val_actions = data['actions'][perm[:split]], data['actions'][perm[split:]]
     train_values, val_values = data['values'][perm[:split]], data['values'][perm[split:]]
 
+    pos = int((data['values'] == 1).sum())
+    neg = int((data['values'] == -1).sum())
+    zero = int((data['values'] == 0).sum())
     print(f'Loaded {n} samples: {split} train, {n - split} val')
+    print(f'Value targets: +1={pos} ({100*pos/n:.1f}%)  -1={neg} ({100*neg/n:.1f}%)  0={zero} ({100*zero/n:.1f}%)')
 
     model = DukeNet(rngs=nnx.Rngs(0))
-    optimizer = nnx.ModelAndOptimizer(model, optax.adamw(lr))
+
+    steps_per_epoch = split // batch_size + 1
+    total_steps = steps_per_epoch * epochs
+    schedule = optax.warmup_cosine_decay_schedule(
+        init_value=lr / 10,
+        peak_value=lr,
+        warmup_steps=steps_per_epoch * 2,
+        decay_steps=total_steps,
+        end_value=lr / 100,
+    )
+    tx = optax.chain(
+        optax.clip_by_global_norm(1.0),
+        optax.adamw(schedule),
+    )
+    optimizer = nnx.ModelAndOptimizer(model, tx)
 
     ckpt_dir = Path('checkpoints').resolve()
     ckpt_dir.mkdir(exist_ok=True)
     checkpointer = ocp.StandardCheckpointer()
+    best_val_loss = float('inf')
 
     for epoch in range(epochs):
         # --- Training ---
@@ -254,10 +275,18 @@ def train(data_path: str, epochs: int = 50, batch_size: int = 256, lr: float = 1
             val_value += aux['value_loss']
             val_batches += 1
 
+        avg_val_loss = (val_policy + val_value) / val_batches
+        marker = ''
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            save_checkpoint(checkpointer, model, ckpt_dir, 'best')
+            marker = '  * best'
+
         print(
             f'Epoch {epoch:3d} | '
             f'train policy: {train_policy / train_batches:.4f}  value: {train_value / train_batches:.4f} | '
             f'val policy: {val_policy / val_batches:.4f}  value: {val_value / val_batches:.4f}'
+            f'{marker}'
         )
 
         if (epoch + 1) % CHECKPOINT_EVERY == 0:

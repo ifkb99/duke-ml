@@ -82,7 +82,8 @@ class ResBlock(nnx.Module):
 # ---------------------------------------------------------------------------
 
 class DukeNet(nnx.Module):
-    def __init__(self, num_filters: int = 64, num_blocks: int = 4,
+    def __init__(self, num_filters: int = 32, num_blocks: int = 2,
+                 policy_hidden: int = 64, value_hidden: int = 32,
                  num_actions: int = TOTAL_ACTIONS, *, rngs: nnx.Rngs):
         self.initial_conv = nnx.Conv(NUM_CHANNELS, num_filters, kernel_size=(3, 3), padding='SAME', rngs=rngs)
         self.initial_bn = nnx.BatchNorm(num_features=num_filters, rngs=rngs)
@@ -91,11 +92,11 @@ class DukeNet(nnx.Module):
 
         flat_size = BOARD_SIZE * BOARD_SIZE * num_filters + BAG_FEATURE_SIZE
 
-        self.policy_fc1 = nnx.Linear(flat_size, 256, rngs=rngs)
-        self.policy_fc2 = nnx.Linear(256, num_actions, rngs=rngs)
+        self.policy_fc1 = nnx.Linear(flat_size, policy_hidden, rngs=rngs)
+        self.policy_fc2 = nnx.Linear(policy_hidden, num_actions, rngs=rngs)
 
-        self.value_fc1 = nnx.Linear(flat_size, 128, rngs=rngs)
-        self.value_fc2 = nnx.Linear(128, 1, rngs=rngs)
+        self.value_fc1 = nnx.Linear(flat_size, value_hidden, rngs=rngs)
+        self.value_fc2 = nnx.Linear(value_hidden, 1, rngs=rngs)
 
     def __call__(self, boards, bags):
         """

@@ -16,6 +16,8 @@ export interface SelfPlayConfig {
   depth?: number;
   /** Maximum game length in turns (default 200) */
   maxTurns?: number;
+  /** Print progress every n games (default 100) */
+  nPrint?: number;
 }
 
 export interface SelfPlayResult {
@@ -145,6 +147,11 @@ export function selfPlayBatch(
       totalSamples += result.numSamples;
     }
     outcomes.push(result.outcome);
+
+    if (config.nPrint && g % config.nPrint === 0) {
+      console.log(`  ${g} of ${numGames} games (${(100 * (g) / numGames).toFixed(1)}%)`);
+      console.log(`${(100 * g / numGames).toFixed(1)}% Done`);
+    }
   }
 
   const out = new Float32Array(totalSamples * SAMPLE_FLOATS);

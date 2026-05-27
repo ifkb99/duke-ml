@@ -17,3 +17,62 @@ I work as a fullstack dev for my day job, so for the webapp portion I used curso
 Almost all of the AI code is handmade since that is what I want to focus on learning for this project.
 
 Have fun with the repo!
+
+## Training a Neural Network
+
+### Prerequisites
+
+- Python 3.14+ with [uv](https://docs.astral.sh/uv/)
+- Node.js 22+ with npm
+- CUDA-capable GPU (for JAX)
+
+Install the Python project in editable mode:
+
+```bash
+uv pip install -e .
+```
+
+### 1. Generate training data
+
+Self-play games using minimax vs minimax. Each game produces ~30-80 training samples.
+
+```bash
+# 1000 games at minimax depth 4, output to a binary file
+npx tsx packages/ai/src/generate.ts 1000 4 training/selfplay.bin
+```
+
+More data = better generalization. Aim for 5,000+ games (~500K samples) for decent results.
+
+### 2. Train
+
+```bash
+cd training
+uv run supervised/train.py selfplay.bin --epochs 50 --batch-size 256 --lr 1e-3
+```
+
+The training script prints per-epoch metrics and saves checkpoints to `training/checkpoints/`. It also tracks the best validation loss and saves an `epoch_best` checkpoint automatically.
+
+Key things to watch:
+- **Policy loss** should decrease steadily (initial value ~8.4 = random)
+- **Value loss** should decrease from ~2.0 toward <0.5
+- **Val vs train gap** — if val loss rises while train loss drops, the model is overfitting (need more data)
+
+### 3. Evaluate against minimax or random
+
+Play test games between the trained neural net and minimax/random:
+
+```bash
+# Net vs random (sanity check — net should win most games)
+npx tsx packages/ai/src/neural-eval.ts --opponent random --games 20
+
+# Net vs minimax depth 2
+npx tsx packages/ai/src/neural-eval.ts --opponent minimax --depth 2 --games 20
+
+# Use best checkpoint instead of epoch 50
+npx tsx packages/ai/src/neural-eval.ts --opponent minimax --epoch best --games 10
+
+# Net plays only as P1
+npx tsx packages/ai/src/neural-eval.ts --net-player P1 --games 10
+```
+
+All commands should be run from the repository root.
