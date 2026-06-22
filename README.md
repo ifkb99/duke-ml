@@ -73,6 +73,14 @@ npx tsx packages/ai/src/neural-eval.ts --opponent minimax --epoch best --games 1
 
 # Net plays only as P1
 npx tsx packages/ai/src/neural-eval.ts --net-player P1 --games 10
+
+# 1-ply value search: the net evaluates each candidate decision with its
+# value head and picks the one that gives the opponent the worst score.
+# Board moves are deterministic; placements are treated as a chance node
+# (expectimax over bag draws), matching how minimax handles draws — this
+# prevents the player from "peeking" at the bag and hand-picking a killer
+# tile. All candidate states are evaluated in a single batched call.
+npx tsx packages/ai/src/neural-eval.ts --mode 1ply --opponent minimax --depth 2 --games 10
 ```
 
 All commands should be run from the repository root.
