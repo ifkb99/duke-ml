@@ -88,6 +88,10 @@ function sq(r: number, c: number): number { return r * BS + c; }
 /** Map a GameMove to its integer action index. */
 export function encodeMoveIndex(move: GameMove): number {
   switch (move.type) {
+    case 'draw':
+      // A draw has no single (tile, square) action index — it must be expanded
+      // into per-tile placements (see enumerateDrawOutcomes) before encoding.
+      throw new Error('encodeMoveIndex: draw moves have no action index; resolve to a placement first');
     case 'move':
       return sq(move.from.row, move.from.col) * CELLS + sq(move.to.row, move.to.col);
     case 'strike':

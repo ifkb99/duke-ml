@@ -32,6 +32,8 @@ export function moveToString(move: GameMove): string {
       return `STRIKE ${coordToSquare(move.from)} ${coordToSquare(move.target)}`;
     case 'command':
       return `COMMAND ${coordToSquare(move.commander)} ${coordToSquare(move.target)} ${coordToSquare(move.targetTo)}`;
+    case 'draw':
+      return `DRAW ${coordToSquare(move.position)}`;
     case 'place':
       return `PLACE ${move.tileName} ${coordToSquare(move.position)}`;
   }
@@ -70,6 +72,10 @@ export function parseMove(raw: string): GameMove | null {
     return commander && target && targetTo
       ? { type: 'command', commander, target, targetTo }
       : null;
+  }
+  if (verb === 'DRAW' && tokens.length >= 2) {
+    const position = squareToCoord(tokens[1]);
+    return position ? { type: 'draw', position } : null;
   }
   if (verb === 'PLACE' && tokens.length >= 3) {
     // Tile name may be any casing; normalize to TitleCase to match registry keys.

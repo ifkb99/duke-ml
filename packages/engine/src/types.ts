@@ -59,6 +59,13 @@ export interface GameState {
 }
 
 export type GameMove =
+  // Player-facing "draw a random tile and place it on `position`". The tile is
+  // hidden until resolution — this is the honest representation of the bag's
+  // hidden information. Move generation emits these.
+  | { type: 'draw'; position: Coord }
+  // Resolved placement of a specific tile. Not emitted by move generation;
+  // produced when a draw is resolved (search chance nodes, UI reveal, etc.)
+  // and still directly applicable via makeMove.
   | { type: 'place'; tileName: string; position: Coord }
   | { type: 'move'; from: Coord; to: Coord }
   | { type: 'strike'; from: Coord; target: Coord }

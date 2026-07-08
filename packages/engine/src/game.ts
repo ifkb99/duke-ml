@@ -182,6 +182,31 @@ export function makeMove(state: GameState, move: GameMove): UndoRecord {
   };
 
   switch (move.type) {
+    case 'draw': {
+      // Resolve the hidden draw now: pull a uniformly random tile from the bag
+      // and place it. The UndoRecord captures which tile/index so unmakeMove
+      // can restore the exact pre-draw state.
+      const player = state.currentPlayer;
+      const bag = state.bags[player];
+      if (bag.length === 0) throw new Error(`Cannot draw: ${player}'s bag is empty`);
+      const idx = Math.floor(Math.random() * bag.length);
+      const tileName = bag[idx];
+      undo.removedFromBag = {player, name: tileName, index: idx};
+      bag.splice(idx, 1);
+
+      const id = `${player}-${tileName}-${++nextInstanceCounter}`;
+      const tile: TileInstance = {
+        defName: tileName,
+        owner: player,
+        side: 'A' as Side,
+        position: {row: move.position.row, col: move.position.col},
+        id,
+      };
+      state.tiles.set(id, tile);
+      state.board[move.position.row][move.position.col] = id;
+      undo.placedTileId = id;
+      break;
+    }
     case 'place': {
       const player = state.currentPlayer;
       const bag = state.bags[player];
@@ -300,8 +325,9 @@ export function unmakeMove(state: GameState, undo: UndoRecord): void {
   const move = undo.move;
 
   switch (move.type) {
+    case 'draw':
     case 'place': {
-      // Remove placed tile from board and tiles map
+      // Both resolve to a placed tile recorded in the undo record.
       const id = undo.placedTileId!;
       state.board[move.position.row][move.position.col] = null;
       state.tiles.delete(id);

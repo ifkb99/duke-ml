@@ -221,36 +221,115 @@ export function generateTileMoves(state: GameState, tile: TileInstance): GameMov
   return moves;
 }
 
-function generatePlacementMoves(state: GameState): GameMove[] {
+/**
+ * Pseudo-legal draw moves: one per empty square orthogonally adjacent to the
+ * current player's Duke (no check filtering — that happens in isMoveLegal).
+ *
+ * A "draw" hides which tile is pulled from the bag; the tile is only revealed
+ * when the move is resolved/applied. This is the honest model of the bag's
+ * hidden information — callers that need per-tile detail (search chance nodes,
+ * UI reveal) use `enumerateDrawOutcomes` instead.
+ */
+function generateDrawMoves(state: GameState): GameMove[] {
   const player = state.currentPlayer;
-  const bag = state.bags[player];
-  if (bag.length === 0) return [];
+  if (state.bags[player].length === 0) return [];
 
-  // Find the Duke
-  let dukePos: Coord | null = null;
-  for (const tile of state.tiles.values()) {
-    if (tile.owner === player && tile.defName === 'Duke') {
-      dukePos = tile.position;
-      break;
-    }
-  }
+  const dukePos = findDukePosition(state, player);
   if (!dukePos) return [];
-
-  // Deduplicate bag tile names
-  const uniqueNames = [...new Set(bag)];
 
   const moves: GameMove[] = [];
   for (const dir of ORTHOGONAL_DIRS) {
     const pos = addOffset(dukePos, dir);
     if (!inBounds(pos)) continue;
     if (state.board[pos.row][pos.col] !== null) continue;
-
-    for (const tileName of uniqueNames) {
-      moves.push({type: 'place', tileName, position: pos});
-    }
+    moves.push({type: 'draw', position: pos});
   }
-
   return moves;
+}
+
+/**
+ * Legality of a draw is tile-independent: placing *any* tile on `pos` adds the
+ * same blocker, and a newly placed friendly tile can never expose the mover's
+ * own Duke. So we test with a throwaway probe occupant rather than a real draw
+ * (which would consume randomness).
+ */
+function isDrawSquareLegal(state: GameState, pos: Coord, player: Player): boolean {
+  const opponent = player === 'P1' ? 'P2' : 'P1';
+  const probeId = '__draw_probe__';
+  state.board[pos.row][pos.col] = probeId;
+  state.tiles.set(probeId, {
+    defName: 'Footman', owner: player, side: 'A',
+    position: {row: pos.row, col: pos.col}, id: probeId,
+  });
+
+  const dukePos = findDukePosition(state, player);
+  const legal = dukePos ? !isSquareAttackedBy(state, dukePos, opponent) : false;
+
+  state.tiles.delete(probeId);
+  state.board[pos.row][pos.col] = null;
+  return legal;
+}
+
+/**
+ * Legal squares where the current player may place a drawn tile: empty and
+ * orthogonally adjacent to their Duke, and not leaving their Duke in check.
+ * Returns [] if the bag is empty. Tile-independent (see isDrawSquareLegal).
+ */
+export function getDrawTargets(state: GameState): Coord[] {
+  const player = state.currentPlayer;
+  if (state.bags[player].length === 0) return [];
+
+  const dukePos = findDukePosition(state, player);
+  if (!dukePos) return [];
+
+  const targets: Coord[] = [];
+  for (const dir of ORTHOGONAL_DIRS) {
+    const pos = addOffset(dukePos, dir);
+    if (!inBounds(pos)) continue;
+    if (state.board[pos.row][pos.col] !== null) continue;
+    if (isDrawSquareLegal(state, pos, player)) targets.push(pos);
+  }
+  return targets;
+}
+
+/** A drawable tile, its probability, and the resolved placements it enables. */
+export interface DrawOutcome {
+  tileName: string;
+  probability: number;
+  placements: { type: 'place'; tileName: string; position: Coord }[];
+}
+
+/**
+ * Expand the current player's "draw" decision into its chance outcomes: for
+ * each distinct tile in the bag, the probability of drawing it and the
+ * resolved `place` moves it permits (one per legal target square).
+ *
+ * This is the single source of truth for expectimax over draws — search and
+ * the neural evaluator both consume it so no caller has to reconstruct the
+ * bag's probability structure (and accidentally let a player "peek").
+ */
+export function enumerateDrawOutcomes(state: GameState): DrawOutcome[] {
+  const player = state.currentPlayer;
+  const bag = state.bags[player];
+  if (bag.length === 0) return [];
+
+  const squares = getDrawTargets(state);
+  if (squares.length === 0) return [];
+
+  const counts = new Map<string, number>();
+  for (const name of bag) counts.set(name, (counts.get(name) ?? 0) + 1);
+
+  const outcomes: DrawOutcome[] = [];
+  for (const [tileName, count] of counts) {
+    outcomes.push({
+      tileName,
+      probability: count / bag.length,
+      placements: squares.map(pos => ({
+        type: 'place' as const, tileName, position: {row: pos.row, col: pos.col},
+      })),
+    });
+  }
+  return outcomes;
 }
 
 // --- Check detection ---
@@ -454,6 +533,12 @@ function isMoveLegal(state: GameState, move: GameMove): boolean {
   const mover = state.currentPlayer;
   const opponent = mover === 'P1' ? 'P2' : 'P1';
 
+  // A draw's legality is tile-independent, so avoid actually drawing (which
+  // would consume randomness); probe with a throwaway blocker instead.
+  if (move.type === 'draw') {
+    return isDrawSquareLegal(state, move.position, mover);
+  }
+
   const undo = makeMove(state, move);
 
   // Captured enemy Duke — game is over, always legal
@@ -482,7 +567,7 @@ export function generatePseudoLegalMoves(state: GameState): GameMove[] {
     }
   }
 
-  moves.push(...generatePlacementMoves(state));
+  moves.push(...generateDrawMoves(state));
 
   return moves;
 }

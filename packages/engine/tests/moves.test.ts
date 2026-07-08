@@ -276,8 +276,8 @@ describe('Player orientation', () => {
   });
 });
 
-describe('Placement moves', () => {
-  it('generates placement adjacent to Duke on empty squares', () => {
+describe('Draw moves', () => {
+  it('generates one draw per empty square adjacent to the Duke', () => {
     const state = makeState({
       bags: { P1: ['Pikeman', 'Knight'], P2: [] },
     });
@@ -287,14 +287,14 @@ describe('Placement moves', () => {
     });
 
     const moves = generateAllMoves(state);
-    const placements = moves.filter(m => m.type === 'place');
+    const draws = moves.filter(m => m.type === 'draw');
 
-    // Duke at (0,2): adjacent = (1,2), (0,1), (0,3) — (row -1 out of bounds)
-    // 3 empty squares × 2 unique tiles = 6 placements
-    expect(placements).toHaveLength(6);
+    // Duke at (0,2): adjacent = (1,2), (0,1), (0,3) — (row -1 out of bounds).
+    // The drawn tile is hidden, so it's one draw per square regardless of bag.
+    expect(draws).toHaveLength(3);
   });
 
-  it('no placements when bag is empty', () => {
+  it('no draws when bag is empty', () => {
     const state = makeState({ bags: { P1: [], P2: [] } });
     placeTile(state, {
       id: 'P1-Duke', defName: 'Duke', owner: 'P1', side: 'A',
@@ -302,11 +302,11 @@ describe('Placement moves', () => {
     });
 
     const moves = generateAllMoves(state);
-    const placements = moves.filter(m => m.type === 'place');
-    expect(placements).toHaveLength(0);
+    const draws = moves.filter(m => m.type === 'draw');
+    expect(draws).toHaveLength(0);
   });
 
-  it('deduplicates bag tile names', () => {
+  it('draw count is independent of bag contents (one per square)', () => {
     const state = makeState({
       bags: { P1: ['Pikeman', 'Pikeman'], P2: [] },
     });
@@ -316,10 +316,10 @@ describe('Placement moves', () => {
     });
 
     const moves = generateAllMoves(state);
-    const placements = moves.filter(m => m.type === 'place');
+    const draws = moves.filter(m => m.type === 'draw');
 
-    // 3 empty adjacent squares × 1 unique tile = 3
-    expect(placements).toHaveLength(3);
+    // 3 empty adjacent squares → 3 draws, even with duplicate bag tiles.
+    expect(draws).toHaveLength(3);
   });
 });
 
@@ -481,10 +481,10 @@ describe('Check legality filtering', () => {
 
     const moves = generateAllMoves(state);
 
-    // All moves must resolve check on (3,3)
+    // All moves must resolve check on (3,3). Drawing to an adjacent square
+    // can't block a one-step Footman check, so no draw is legal here.
     for (const m of moves) {
-      // Verify each move is legal (Duke is safe after)
-      expect(m.type).not.toBe('place');
+      expect(m.type).not.toBe('draw');
     }
 
     // Duke can slide away: (3,2),(3,1),(3,0),(3,4),(3,5)
@@ -531,7 +531,7 @@ describe('Check legality filtering', () => {
     expect(targets).toContain('4,3');
   });
 
-  it('placement can block a slide-based check', () => {
+  it('a draw can block a slide-based check', () => {
     const state = makeState({
       bags: { P1: ['Footman'], P2: [] },
     });
@@ -546,12 +546,13 @@ describe('Check legality filtering', () => {
     });
 
     const moves = generateAllMoves(state);
-    const placements = moves.filter(m => m.type === 'place');
+    const draws = moves.filter(m => m.type === 'draw');
 
-    // Placing adjacent to P1 Duke: (2,0), (4,0), (3,1)
+    // Drawing adjacent to P1 Duke: (2,0), (4,0), (3,1)
     // (3,1) blocks the slide from P2 Duke! Legal.
     // (2,0) and (4,0) don't block — Duke at (3,0) still attacked. Illegal.
-    expect(placements).toHaveLength(1);
-    expect(placements[0].type === 'place' && placements[0].position).toEqual({ row: 3, col: 1 });
+    // Draw legality is tile-independent (any blocker works).
+    expect(draws).toHaveLength(1);
+    expect(draws[0].type === 'draw' && draws[0].position).toEqual({ row: 3, col: 1 });
   });
 });

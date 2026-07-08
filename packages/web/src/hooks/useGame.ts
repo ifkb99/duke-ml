@@ -76,11 +76,12 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
 
   const placementTargets = useMemo<Coord[]>(() => {
     if (!drawMode || !selectedDrawTile) return [];
+    // Draw target squares are tile-independent; the revealed tile is placed on
+    // whichever legal square the player picks.
     const seen = new Set<string>();
     const targets: Coord[] = [];
     for (const m of allMoves) {
-      if (m.type !== 'place') continue;
-      if (m.tileName !== selectedDrawTile) continue;
+      if (m.type !== 'draw') continue;
       const key = `${m.position.row},${m.position.col}`;
       if (!seen.has(key)) {
         seen.add(key);
@@ -200,7 +201,7 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
     resetSelection();
   }, [state, resetSelection]);
 
-  const hasPlacementMoves = allMoves.some(m => m.type === 'place');
+  const hasPlacementMoves = allMoves.some(m => m.type === 'draw');
   const canDraw = !isSetup && state.bags[state.currentPlayer].length > 0 && hasPlacementMoves;
 
   const startDraw = useCallback(() => {
@@ -300,15 +301,15 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
     const clickedId = state.board[coord.row][coord.col];
     const clickedTile = clickedId ? state.tiles.get(clickedId) ?? null : null;
 
-    // Draw mode: only valid placement clicks accepted
+    // Draw mode: the tile was already revealed (selectedDrawTile); accept a
+    // click on any legal draw square and place that revealed tile there.
     if (drawMode && selectedDrawTile) {
-      const placementMove = allMoves.find(
-        m => m.type === 'place'
-          && m.tileName === selectedDrawTile
+      const isTarget = allMoves.some(
+        m => m.type === 'draw'
           && m.position.row === coord.row && m.position.col === coord.col,
       );
-      if (placementMove) {
-        executeMove(placementMove);
+      if (isTarget) {
+        executeMove({type: 'place', tileName: selectedDrawTile, position: coord});
       }
       return;
     }

@@ -1,5 +1,5 @@
-import type {GameMove, GameState, Player} from '@the-duke/engine';
-import {findDukePosition, generatePseudoLegalMoves, isPlayerInCheck, isSquareAttackedBy, makeMove, unmakeMove} from '@the-duke/engine';
+import type {DrawOutcome, GameMove, GameState, Player} from '@the-duke/engine';
+import {enumerateDrawOutcomes, findDukePosition, generatePseudoLegalMoves, isPlayerInCheck, isSquareAttackedBy, makeMove, unmakeMove} from '@the-duke/engine';
 import {evaluate, evaluatePlacement} from './evaluate.js';
 import {
   TT_EXACT, TT_LOWER, TT_UPPER,
@@ -112,48 +112,16 @@ function orderMoves(moves: GameMove[], state: GameState, pvEncoded: number, dept
 // Expectimax: split moves into board moves and draw outcomes
 // ---------------------------------------------------------------------------
 
-interface DrawOutcome {
-  tileName: string;
-  probability: number;
-  placements: GameMove[];
-}
-
 function splitMoves(
   moves: GameMove[],
   state: GameState,
 ): {boardMoves: GameMove[]; drawOutcomes: DrawOutcome[]} {
-  const boardMoves: GameMove[] = [];
-  const placeByTile = new Map<string, GameMove[]>();
-
-  for (const move of moves) {
-    if (move.type === 'place') {
-      const list = placeByTile.get(move.tileName);
-      if (list) list.push(move);
-      else placeByTile.set(move.tileName, [move]);
-    } else {
-      boardMoves.push(move);
-    }
-  }
-
-  if (placeByTile.size === 0) return {boardMoves, drawOutcomes: []};
-
-  const bag = state.bags[state.currentPlayer];
-  const bagTotal = bag.length;
-  if (bagTotal === 0) return {boardMoves, drawOutcomes: []};
-
-  const bagCounts = new Map<string, number>();
-  for (const name of bag) {
-    bagCounts.set(name, (bagCounts.get(name) ?? 0) + 1);
-  }
-
-  const drawOutcomes: DrawOutcome[] = [];
-  for (const [tileName, placements] of placeByTile) {
-    const count = bagCounts.get(tileName) ?? 0;
-    if (count > 0) {
-      drawOutcomes.push({tileName, probability: count / bagTotal, placements});
-    }
-  }
-
+  // Draw moves are chance decisions. Expand them into weighted per-tile
+  // outcomes via the engine, which owns the bag's probability structure — this
+  // keeps the expectimax model (E over drawn tile of best placement) in one
+  // place and prevents any caller from treating a specific tile as choosable.
+  const boardMoves = moves.filter(m => m.type !== 'draw' && m.type !== 'place');
+  const drawOutcomes = enumerateDrawOutcomes(state);
   return {boardMoves, drawOutcomes};
 }
 

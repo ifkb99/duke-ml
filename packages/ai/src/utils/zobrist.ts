@@ -109,7 +109,9 @@ export function hashAfterMove(oldHash: number, state: GameState, undo: UndoRecor
   const move = undo.move;
 
   switch (move.type) {
+    case 'draw':
     case 'place': {
+      // Both resolve to a freshly placed tile captured in the undo record.
       const tile = state.tiles.get(undo.placedTileId!)!;
       const ti = TILE_NAME_INDEX.get(tile.defName)!;
       const combo = (tile.owner === 'P1' ? 0 : 2); // side always A → +0
@@ -246,6 +248,10 @@ export function ttClear(): void {
 
 export function encodeMove(move: import('@the-duke/engine').GameMove): number {
   switch (move.type) {
+    // Draws are chance decisions handled outside the board-move ordering / TT,
+    // so they never need a packed encoding. 0 = "no move".
+    case 'draw':
+      return 0;
     case 'place': {
       const ti = TILE_NAME_INDEX.get(move.tileName) ?? 0;
       return 1 | (move.position.row << 3) | (move.position.col << 6) | (ti << 21);

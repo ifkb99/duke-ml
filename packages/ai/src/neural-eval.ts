@@ -21,7 +21,7 @@ import {parseArgs} from 'node:util';
 
 import {
   createInitialState, applySetupPlacement, applyMove,
-  generateAllMoves, getSetupTargets,
+  generateAllMoves, getSetupTargets, enumerateDrawOutcomes,
   type GameState, type GameMove,
 } from '@the-duke/engine';
 
@@ -70,20 +70,36 @@ class NeuralPlayer {
 
   /** Raw policy argmax: ask the network for a single action. */
   async pickByPolicy(state: GameState, legalMoves: GameMove[]): Promise<{move: GameMove | null; value: number}> {
+    // The policy head's action space is (tile, square) placements, so expand
+    // draws into per-tile placement candidates for the legal mask. The tile the
+    // net "picks" is discarded below — only its square preference is honored,
+    // with the tile drawn randomly — so the net cannot peek into the bag.
+    const boardMoves = legalMoves.filter(m => m.type !== 'draw');
+    const placeCandidates: GameMove[] = [];
+    for (const o of enumerateDrawOutcomes(state)) {
+      for (const p of o.placements) placeCandidates.push(p);
+    }
+    const candidates = [...boardMoves, ...placeCandidates];
+
     const encoded = encodeStateFresh(state);
     const boards = Array.from(encoded.subarray(0, BOARD_TENSOR_SIZE));
     const bags = Array.from(encoded.subarray(BOARD_TENSOR_SIZE, STATE_TENSOR_SIZE));
 
     const maskBuf = new Float32Array(TOTAL_ACTIONS);
-    encodeLegalMask(legalMoves, maskBuf, 0);
+    encodeLegalMask(candidates, maskBuf, 0);
     const legal_mask = Array.from(maskBuf);
 
     const req = JSON.stringify({type: 'action', boards, bags, legal_mask});
     this.proc.stdin!.write(req + '\n');
     const resp = await new Promise<ActionResp | ValueBatchResp>((resolve) => { this.pending = resolve; }) as ActionResp;
 
-    const move = decodeMoveIndex(resp.action, legalMoves);
-    return {move, value: resp.value};
+    const chosen = decodeMoveIndex(resp.action, candidates);
+    if (chosen && chosen.type === 'place') {
+      const bag = state.bags[state.currentPlayer];
+      const drawn = bag[Math.floor(Math.random() * bag.length)];
+      return {move: {type: 'place', tileName: drawn, position: chosen.position}, value: resp.value};
+    }
+    return {move: chosen, value: resp.value};
   }
 
   /** Batch value evaluation: ask the network for V(s_i) for each state. */
@@ -154,132 +170,99 @@ async function pickByOnePly(
   const winStatus = us === 'P1' ? 'P1_wins' : 'P2_wins';
   const lossStatus = us === 'P1' ? 'P2_wins' : 'P1_wins';
 
-  // 1. Partition legal moves into board moves vs placements (grouped by tile).
-  const boardMoves: GameMove[] = [];
-  const placementsByTile = new Map<string, GameMove[]>();
+  // States needing a network value; each candidate references a slot here, or
+  // carries a forced value (terminal shortcut) and slot = -1.
+  const evalStates: GameState[] = [];
+  interface Cand { move: GameMove; forced: number | null; slot: number; }
+
+  // 1. Board moves. An immediate win is taken deterministically; an immediate
+  //    loss is discarded; the rest are queued for value evaluation.
+  const boardCands: Cand[] = [];
   for (const m of legalMoves) {
-    if (m.type === 'place') {
-      let arr = placementsByTile.get(m.tileName);
-      if (!arr) { arr = []; placementsByTile.set(m.tileName, arr); }
-      arr.push(m);
-    } else {
-      boardMoves.push(m);
-    }
-  }
-
-  // 2. Walk all candidates, applying each move once.
-  //    - For board moves: a winStatus result is a deterministic win → take it.
-  //    - lossStatus results are dropped on the floor.
-  //    - Everything else gets queued for batched value evaluation. Placements
-  //      that give winStatus get value=-1 without consulting the net (avoids
-  //      asking the model about terminal positions it never saw clearly).
-
-  const queueMoves: GameMove[] = [];
-  const queueKinds: ('board' | 'place')[] = [];
-  const queueTiles: (string | null)[] = [];
-  const queueForcedValues: (number | null)[] = []; // null = needs net eval
-
-  const queueStatesForNet: GameState[] = [];
-  const queueIdxForNet: number[] = [];
-
-  for (const m of boardMoves) {
+    if (m.type === 'draw') continue;
     const s = applyMove(state, m);
     if (s.status === winStatus) return {move: m, value: -1};
     if (s.status === lossStatus) continue;
-    const idx = queueMoves.length;
-    queueMoves.push(m);
-    queueKinds.push('board');
-    queueTiles.push(null);
-    queueForcedValues.push(null);
-    queueIdxForNet.push(idx);
-    queueStatesForNet.push(s);
+    boardCands.push({move: m, forced: null, slot: evalStates.length});
+    evalStates.push(s);
   }
 
-  for (const [tileName, moves] of placementsByTile) {
-    for (const m of moves) {
-      const s = applyMove(state, m);
+  // 2. Draw decision, modeled as a chance node (expectimax). For each drawable
+  //    tile we look at the resolved placements from the engine and later take
+  //    the best square. A placement that wins outright gets value -1 without
+  //    consulting the net (it never saw such terminal states clearly).
+  const drawOutcomes = enumerateDrawOutcomes(state);
+  const placeByTile = new Map<string, Cand[]>();
+  for (const o of drawOutcomes) {
+    const list: Cand[] = [];
+    for (const p of o.placements) {
+      const s = applyMove(state, p);
       if (s.status === lossStatus) continue;
-      const forced = s.status === winStatus ? -1 : null;
-      const idx = queueMoves.length;
-      queueMoves.push(m);
-      queueKinds.push('place');
-      queueTiles.push(tileName);
-      queueForcedValues.push(forced);
-      if (forced === null) {
-        queueIdxForNet.push(idx);
-        queueStatesForNet.push(s);
-      }
+      if (s.status === winStatus) { list.push({move: p, forced: -1, slot: -1}); continue; }
+      list.push({move: p, forced: null, slot: evalStates.length});
+      evalStates.push(s);
     }
+    if (list.length > 0) placeByTile.set(o.tileName, list);
   }
 
-  if (queueMoves.length === 0) {
-    // Every legal move loses immediately. Resign-grade fallback.
+  if (boardCands.length === 0 && placeByTile.size === 0) {
+    // Every option loses immediately. Resign-grade fallback.
     return {move: legalMoves[0], value: 1};
   }
 
-  // 3. Run the batched value query for non-forced entries.
-  const netValues = queueStatesForNet.length > 0
-    ? await neural.evaluateBatch(queueStatesForNet)
-    : [];
+  // 3. One batched value query for all non-forced states.
+  const netValues = evalStates.length > 0 ? await neural.evaluateBatch(evalStates) : [];
+  const valOf = (c: Cand) => (c.forced !== null ? c.forced : netValues[c.slot]);
 
-  const values = new Array<number>(queueMoves.length);
-  for (let i = 0; i < queueMoves.length; i++) {
-    if (queueForcedValues[i] !== null) values[i] = queueForcedValues[i]!;
-  }
-  for (let k = 0; k < queueIdxForNet.length; k++) {
-    values[queueIdxForNet[k]] = netValues[k];
-  }
-
-  // 4. Best deterministic board move.
+  // 4. Best board move (minimize the opponent's value).
   let bestBoardMove: GameMove | null = null;
   let bestBoardValue = Infinity;
-  for (let i = 0; i < queueMoves.length; i++) {
-    if (queueKinds[i] !== 'board') continue;
-    if (values[i] < bestBoardValue) {
-      bestBoardValue = values[i];
-      bestBoardMove = queueMoves[i];
-    }
+  for (const c of boardCands) {
+    const v = valOf(c);
+    if (v < bestBoardValue) { bestBoardValue = v; bestBoardMove = c.move; }
   }
 
-  // 5. Best placement per drawable tile, then expected value of "draw".
+  // 5. Best placement per tile, then expected value of drawing:
+  //    E_tile[ min_square V ]  — matches minimax's chance-node model.
   const bestPerTile = new Map<string, {value: number; move: GameMove}>();
-  for (let i = 0; i < queueMoves.length; i++) {
-    if (queueKinds[i] !== 'place') continue;
-    const t = queueTiles[i]!;
-    const cur = bestPerTile.get(t);
-    if (!cur || values[i] < cur.value) {
-      bestPerTile.set(t, {value: values[i], move: queueMoves[i]});
+  for (const [tile, list] of placeByTile) {
+    let best = Infinity;
+    let bestMove = list[0].move;
+    for (const c of list) {
+      const v = valOf(c);
+      if (v < best) { best = v; bestMove = c.move; }
     }
+    bestPerTile.set(tile, {value: best, move: bestMove});
   }
 
   const bag = state.bags[us];
-  const bagSize = bag.length;
-  const tileCounts = new Map<string, number>();
-  for (const t of bag) tileCounts.set(t, (tileCounts.get(t) ?? 0) + 1);
-
   let drawExpected = Infinity;
-  if (bagSize > 0 && bestPerTile.size > 0) {
+  if (bag.length > 0 && bestPerTile.size > 0) {
+    const counts = new Map<string, number>();
+    for (const t of bag) counts.set(t, (counts.get(t) ?? 0) + 1);
     drawExpected = 0;
-    for (const [tileName, count] of tileCounts) {
-      const p = count / bagSize;
-      const best = bestPerTile.get(tileName);
-      // Tiles with no legal placement contribute 0 (≈ neutral pass) since the
-      // engine still consumed the turn. Rare in practice.
-      drawExpected += best ? p * best.value : 0;
+    for (const [tile, count] of counts) {
+      const p = count / bag.length;
+      const best = bestPerTile.get(tile);
+      // Squares are tile-independent, so every bag tile has placements unless
+      // none are legal at all (handled by the empty-map guard above).
+      drawExpected += best ? p * best.value : p; // 1.0 ≈ loss if somehow none
     }
   }
 
-  // 6. Pick the better option.
-  if (drawExpected < bestBoardValue) {
-    const drawnTile = bag[Math.floor(Math.random() * bag.length)];
-    const choice = bestPerTile.get(drawnTile);
+  // 6. Choose the better of "best board move" vs "draw". If drawing wins, we
+  //    sample a tile (blind) and play its best square — genuine random draw.
+  if (drawExpected < bestBoardValue && bestPerTile.size > 0) {
+    const drawn = bag[Math.floor(Math.random() * bag.length)];
+    const choice = bestPerTile.get(drawn);
     if (choice) return {move: choice.move, value: drawExpected};
-    // Drawn tile has no legal placement — fall back to board move.
-    if (bestBoardMove) return {move: bestBoardMove, value: bestBoardValue};
   }
   if (bestBoardMove) return {move: bestBoardMove, value: bestBoardValue};
 
-  // Should be unreachable given queueMoves.length > 0 above.
+  // Only draws were available.
+  const drawn = bag[Math.floor(Math.random() * bag.length)];
+  const choice = bestPerTile.get(drawn);
+  if (choice) return {move: choice.move, value: drawExpected};
   return {move: legalMoves[0], value: 1};
 }
 

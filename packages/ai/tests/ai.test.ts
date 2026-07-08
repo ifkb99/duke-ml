@@ -24,6 +24,27 @@ function placeTile(state: GameState, tile: TileInstance): void {
   state.board[tile.position.row][tile.position.col] = tile.id;
 }
 
+/**
+ * findBestMove resolves a "draw" decision into a concrete `place` move (it
+ * samples a tile and picks its best square). Such a placement won't appear in
+ * generateAllMoves (which lists hidden `draw` moves), so accept a placement
+ * whose square matches a legal draw target.
+ */
+function expectChosenLegal(move: ReturnType<typeof findBestMove>['move'], state: GameState): void {
+  expect(move).not.toBeNull();
+  const legal = generateAllMoves(state);
+  if (move!.type === 'place') {
+    const ok = legal.some(
+      m => m.type === 'draw'
+        && m.position.row === move!.position.row
+        && m.position.col === move!.position.col,
+    );
+    expect(ok).toBe(true);
+  } else {
+    expect(legal).toContainEqual(move);
+  }
+}
+
 /** Run through the 6-step setup with fixed positions. */
 function setupGame(): GameState {
   let s = createInitialState();
@@ -96,9 +117,7 @@ describe('findBestMove', () => {
   it('returns a legal move', () => {
     const state = setupGame();
     const result = findBestMove(state, 2);
-    expect(result.move).not.toBeNull();
-    const legal = generateAllMoves(state);
-    expect(legal).toContainEqual(result.move);
+    expectChosenLegal(result.move, state);
   });
 
   it('tracks nodes searched', () => {
@@ -141,9 +160,7 @@ describe('findBestMove', () => {
     expect(afterP1.currentPlayer).toBe('P2');
 
     const result = findBestMove(afterP1, 2);
-    expect(result.move).not.toBeNull();
-    const legal = generateAllMoves(afterP1);
-    expect(legal).toContainEqual(result.move);
+    expectChosenLegal(result.move, afterP1);
   });
 
   it('returns null move when no moves available', () => {
