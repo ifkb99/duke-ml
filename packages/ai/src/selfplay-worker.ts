@@ -26,11 +26,11 @@ parentPort.on('message', (msg: PlayMessage) => {
 
   const result = selfPlay({depth: msg.depth, maxTurns: msg.maxTurns});
 
-  // Slice into a fresh ArrayBuffer so we can transfer ownership (zero-copy).
-  const ab = result.data.buffer.slice(
-    result.data.byteOffset,
-    result.data.byteOffset + result.data.byteLength,
-  );
+  // Copy the samples into a fresh, standalone ArrayBuffer so ownership can be
+  // transferred (zero-copy) to the main thread. Typing it as ArrayBuffer (not
+  // the ArrayBufferLike that Float32Array.buffer exposes) keeps it Transferable.
+  const ab = new ArrayBuffer(result.data.byteLength);
+  new Float32Array(ab).set(result.data);
 
   parentPort!.postMessage(
     {numSamples: result.numSamples, outcome: result.outcome, buffer: ab},
