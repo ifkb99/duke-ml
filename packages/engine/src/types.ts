@@ -76,7 +76,7 @@ export interface UndoRecord {
   prevCurrentPlayer: Player;
   prevTurnNumber: number;
   prevStatus: GameStatus;
-  // The moved/acting tile
+  // The moved/acting tile (for command: the commander, which flips in place)
   movedTileId: string | null;
   prevSide: Side | null;
   prevPosition: Coord | null;

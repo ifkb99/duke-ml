@@ -30,25 +30,20 @@ function adjacentEmpty(state: GameState, origin: Coord): Coord[] {
   return targets;
 }
 
+const DUKE_START_COLS: readonly number[] = [BOARD_SIZE / 2 - 1, BOARD_SIZE / 2];
+
 /** Return valid placement squares for the current setup sub-phase. */
 export function getSetupTargets(state: GameState): Coord[] {
   if (state.status !== 'setup' || !state.setupPhase) return [];
 
   switch (state.setupPhase) {
-    case 'p1_duke': {
-      const targets: Coord[] = [];
-      for (let c = 0; c < BOARD_SIZE; c++) {
-        if (!state.board[0][c]) targets.push({row: 0, col: c});
-      }
-      return targets;
-    }
-    case 'p2_duke': {
-      const targets: Coord[] = [];
-      for (let c = 0; c < BOARD_SIZE; c++) {
-        if (!state.board[BOARD_SIZE - 1][c]) targets.push({row: BOARD_SIZE - 1, col: c});
-      }
-      return targets;
-    }
+    // Official rule: the Duke starts on one of the two center squares of its home row.
+    case 'p1_duke':
+      return DUKE_START_COLS.filter(c => !state.board[0][c]).map(c => ({row: 0, col: c}));
+    case 'p2_duke':
+      return DUKE_START_COLS
+        .filter(c => !state.board[BOARD_SIZE - 1][c])
+        .map(c => ({row: BOARD_SIZE - 1, col: c}));
     case 'p1_footman1':
     case 'p1_footman2': {
       const duke = findDukePosition(state, 'P1');
@@ -276,6 +271,13 @@ export function makeMove(state: GameState, move: GameMove): UndoRecord {
       break;
     }
     case 'command': {
+      // The commander stays put but flips; the commanded tile moves without flipping.
+      const commanderId = state.board[move.commander.row][move.commander.col]!;
+      const commander = state.tiles.get(commanderId)!;
+      undo.movedTileId = commanderId;
+      undo.prevSide = commander.side;
+      undo.prevPosition = {row: commander.position.row, col: commander.position.col};
+
       const commandedId = state.board[move.target.row][move.target.col]!;
       const commanded = state.tiles.get(commandedId)!;
       undo.commandedTileId = commandedId;
@@ -299,7 +301,7 @@ export function makeMove(state: GameState, move: GameMove): UndoRecord {
       state.board[move.targetTo.row][move.targetTo.col] = commandedId;
       commanded.position.row = move.targetTo.row;
       commanded.position.col = move.targetTo.col;
-      commanded.side = commanded.side === 'A' ? 'B' : 'A';
+      commander.side = commander.side === 'A' ? 'B' : 'A';
       break;
     }
   }
@@ -379,6 +381,7 @@ export function unmakeMove(state: GameState, undo: UndoRecord): void {
       commanded.position.row = undo.commandedPrevPosition!.row;
       commanded.position.col = undo.commandedPrevPosition!.col;
       commanded.side = undo.commandedPrevSide!;
+      state.tiles.get(undo.movedTileId!)!.side = undo.prevSide!;
 
       // Restore captured tile at dest
       if (undo.commandCapturedTileId) {

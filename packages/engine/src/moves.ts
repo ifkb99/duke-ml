@@ -136,24 +136,28 @@ const ORTHOGONAL_DIRS: Offset[] = [
   {dRow: 0, dCol: 1},
 ];
 
+/**
+ * Command (official rule): move a friendly tile standing on one of the
+ * commander's command squares to any *other* command square. The destination
+ * must be empty or hold an enemy (captured). The commander flips; the
+ * commanded tile does not (see makeMove).
+ */
 function generateCommandMoves(
   state: GameState, commander: Coord, pattern: MovePattern, player: Player,
 ): GameMove[] {
-  const moves: GameMove[] = [];
+  const squares: Coord[] = [];
   for (const offset of pattern.offsets) {
-    const target = addOffset(commander, adjustOffset(offset, player));
-    if (!inBounds(target)) continue;
+    const sq = addOffset(commander, adjustOffset(offset, player));
+    if (inBounds(sq)) squares.push(sq);
+  }
+
+  const moves: GameMove[] = [];
+  for (const target of squares) {
     const occupant = tileAt(state, target);
     if (!occupant || !isFriendly(occupant, player)) continue;
-    // Cannot command self
-    if (target.row === commander.row && target.col === commander.col) continue;
-
-    for (const dir of ORTHOGONAL_DIRS) {
-      const dest = addOffset(target, dir);
-      if (!inBounds(dest)) continue;
+    for (const dest of squares) {
+      if (dest.row === target.row && dest.col === target.col) continue;
       const destOccupant = tileAt(state, dest);
-      // Can't move commanded tile onto the commander's own square
-      if (dest.row === commander.row && dest.col === commander.col) continue;
       if (!destOccupant || isEnemy(destOccupant, player)) {
         moves.push({type: 'command', commander, target, targetTo: dest});
       }
@@ -474,24 +478,23 @@ function canTileReachSquare(
         break;
       }
       case 'command': {
-        // Check if any commanded friendly tile is orthogonally adjacent to target
+        // Target must itself be a command square (empty or enemy), and some
+        // *other* command square must hold a friendly tile to move there.
+        let targetIsCommandSquare = false;
+        let hasFriendlySource = false;
         for (const offset of pattern.offsets) {
           const adjDr = player === 'P2' ? offset.dRow : -offset.dRow;
           const cmdR = from.row + adjDr;
           const cmdC = from.col + offset.dCol;
           if (cmdR < 0 || cmdR >= BOARD_SIZE || cmdC < 0 || cmdC >= BOARD_SIZE) continue;
+          if (cmdR === target.row && cmdC === target.col) {
+            targetIsCommandSquare = true;
+            continue;
+          }
           const cmdId = state.board[cmdR][cmdC];
-          if (!cmdId) continue;
-          const cmdTile = state.tiles.get(cmdId)!;
-          if (cmdTile.owner !== player) continue;
-          if (cmdR === from.row && cmdC === from.col) continue; // can't command self
-          // Check if target is orthogonally adjacent to commanded tile
-          const tdr = target.row - cmdR;
-          const tdc = target.col - cmdC;
-          if ((Math.abs(tdr) + Math.abs(tdc)) !== 1) continue;
-          // Can't move onto commander's square
-          if (target.row === from.row && target.col === from.col) continue;
-          // Target must be empty or enemy
+          if (cmdId && state.tiles.get(cmdId)!.owner === player) hasFriendlySource = true;
+        }
+        if (targetIsCommandSquare && hasFriendlySource) {
           const occupant = state.board[target.row][target.col];
           if (!occupant || state.tiles.get(occupant)!.owner !== player) return true;
         }

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   type GameState, type TileInstance,
   createEmptyBoard, BOARD_SIZE, generateAllMoves, isSquareAttackedBy,
+  applyMove, makeMove, unmakeMove, serialize,
 } from '../src/index.js';
 
 function makeState(overrides: Partial<GameState> = {}): GameState {
@@ -554,5 +555,136 @@ describe('Check legality filtering', () => {
     // Draw legality is tile-independent (any blocker works).
     expect(draws).toHaveLength(1);
     expect(draws[0].type === 'draw' && draws[0].position).toEqual({ row: 3, col: 1 });
+  });
+});
+
+describe('Command', () => {
+  // General side B (P1 perspective, P1 faces +row):
+  //   command squares L, R, BL, B, BR  →  from (2,2): (2,1) (2,3) (1,1) (1,2) (1,3)
+  function generalBState(): GameState {
+    const state = makeState();
+    placeTile(state, {
+      id: 'P1-General', defName: 'General', owner: 'P1', side: 'B',
+      position: { row: 2, col: 2 },
+    });
+    placeTile(state, {
+      id: 'P1-Duke', defName: 'Duke', owner: 'P1', side: 'A',
+      position: { row: 0, col: 5 },
+    });
+    placeTile(state, {
+      id: 'P2-Duke', defName: 'Duke', owner: 'P2', side: 'A',
+      position: { row: 5, col: 0 },
+    });
+    return state;
+  }
+
+  it('moves a friendly tile from one command square to any other command square', () => {
+    const state = generalBState();
+    placeTile(state, {
+      id: 'P1-Footman-1', defName: 'Footman', owner: 'P1', side: 'A',
+      position: { row: 1, col: 1 },
+    });
+    const cmds = generateAllMoves(state).filter(m => m.type === 'command');
+    const dests = cmds.map(m => m.type === 'command' ? `${m.targetTo.row},${m.targetTo.col}` : '').sort();
+    // Every other command square — not "one step in any direction".
+    expect(dests).toEqual(['1,2', '1,3', '2,1', '2,3']);
+    for (const m of cmds) {
+      if (m.type !== 'command') continue;
+      expect(m.target).toEqual({ row: 1, col: 1 });
+    }
+  });
+
+  it('cannot command onto a non-command square or a friendly-occupied one', () => {
+    const state = generalBState();
+    placeTile(state, {
+      id: 'P1-Footman-1', defName: 'Footman', owner: 'P1', side: 'A',
+      position: { row: 1, col: 1 },
+    });
+    placeTile(state, {
+      id: 'P1-Footman-2', defName: 'Footman', owner: 'P1', side: 'A',
+      position: { row: 2, col: 1 },
+    });
+    const cmds = generateAllMoves(state).filter(m => m.type === 'command');
+    for (const m of cmds) {
+      if (m.type !== 'command') continue;
+      const to = `${m.targetTo.row},${m.targetTo.col}`;
+      expect(['1,2', '1,3', '2,3']).toContain(to); // (0,1) is adjacent but not a command square
+    }
+    // 2 friendly sources × 3 open destinations
+    expect(cmds).toHaveLength(6);
+  });
+
+  it('captures an enemy on the destination; commander flips, commanded tile does not', () => {
+    let state = generalBState();
+    placeTile(state, {
+      id: 'P1-Footman-1', defName: 'Footman', owner: 'P1', side: 'A',
+      position: { row: 1, col: 1 },
+    });
+    placeTile(state, {
+      id: 'P2-Pikeman', defName: 'Pikeman', owner: 'P2', side: 'A',
+      position: { row: 2, col: 3 },
+    });
+    const cmd = generateAllMoves(state).find(
+      m => m.type === 'command' && m.targetTo.row === 2 && m.targetTo.col === 3,
+    )!;
+    expect(cmd).toBeDefined();
+    state = applyMove(state, cmd);
+    expect(state.tiles.has('P2-Pikeman')).toBe(false);
+    expect(state.board[2][3]).toBe('P1-Footman-1');
+    expect(state.tiles.get('P1-Footman-1')!.side).toBe('A');
+    expect(state.tiles.get('P1-General')!.side).toBe('A'); // B → A
+  });
+
+  it('command threats count as attacks on the target square', () => {
+    const state = generalBState();
+    placeTile(state, {
+      id: 'P1-Footman-1', defName: 'Footman', owner: 'P1', side: 'B',
+      position: { row: 1, col: 1 },
+    });
+    expect(isSquareAttackedBy(state, { row: 2, col: 3 }, 'P1')).toBe(true);
+    // Orthogonally adjacent to the (side B) Footman, but not a command square
+    expect(isSquareAttackedBy(state, { row: 1, col: 0 }, 'P1')).toBe(false);
+  });
+
+  it('unmakeMove restores the commander side and commanded position', () => {
+    const state = generalBState();
+    placeTile(state, {
+      id: 'P1-Footman-1', defName: 'Footman', owner: 'P1', side: 'B',
+      position: { row: 1, col: 1 },
+    });
+    const before = JSON.stringify(serialize(state));
+    const cmd = generateAllMoves(state).find(m => m.type === 'command')!;
+    const undo = makeMove(state, cmd);
+    unmakeMove(state, undo);
+    expect(JSON.stringify(serialize(state))).toBe(before);
+  });
+});
+
+describe('Strike', () => {
+  it('striker stays in place and flips', () => {
+    let state = makeState();
+    // Champion side B strikes orthogonally adjacent squares
+    placeTile(state, {
+      id: 'P1-Champion', defName: 'Champion', owner: 'P1', side: 'B',
+      position: { row: 2, col: 2 },
+    });
+    placeTile(state, {
+      id: 'P1-Duke', defName: 'Duke', owner: 'P1', side: 'A',
+      position: { row: 0, col: 5 },
+    });
+    placeTile(state, {
+      id: 'P2-Duke', defName: 'Duke', owner: 'P2', side: 'A',
+      position: { row: 5, col: 0 },
+    });
+    placeTile(state, {
+      id: 'P2-Footman', defName: 'Footman', owner: 'P2', side: 'A',
+      position: { row: 3, col: 2 },
+    });
+    const strike = generateAllMoves(state).find(m => m.type === 'strike')!;
+    expect(strike).toBeDefined();
+    state = applyMove(state, strike);
+    expect(state.tiles.has('P2-Footman')).toBe(false);
+    expect(state.tiles.get('P1-Champion')!.position).toEqual({ row: 2, col: 2 });
+    expect(state.tiles.get('P1-Champion')!.side).toBe('A');
   });
 });

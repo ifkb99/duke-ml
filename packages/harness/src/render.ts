@@ -34,7 +34,7 @@ const MOVE_TYPE_EXPLANATION: Record<string, string> = {
   jump: 'jumps directly to (ignores intervening pieces)',
   jump_slide: 'slides any distance toward, jumping over pieces in the way',
   strike: 'captures without moving at',
-  command: 'commands a friendly piece at, moving it one square orthogonally',
+  command: 'commands: a friendly piece on one of these squares may be moved to another of these squares',
 };
 
 function describePattern(p: MovePattern): string {

@@ -8,10 +8,10 @@ import type {AIWorkerRequest, AIWorkerResponse} from '../workers/ai.worker.js';
 import type {GameMode} from '../App.js';
 
 const SETUP_LABELS: Record<SetupPhase, string> = {
-  p1_duke: 'Light: Place your Duke on the back row',
+  p1_duke: 'Light: Place your Duke in the center of the back row',
   p1_footman1: 'Light: Place a Footman next to the Duke',
   p1_footman2: 'Light: Place a Footman next to the Duke',
-  p2_duke: 'Dark: Place your Duke on the back row',
+  p2_duke: 'Dark: Place your Duke in the center of the back row',
   p2_footman1: 'Dark: Place a Footman next to the Duke',
   p2_footman2: 'Dark: Place a Footman next to the Duke',
 };
