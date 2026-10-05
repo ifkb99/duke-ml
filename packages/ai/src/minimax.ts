@@ -20,6 +20,17 @@ export interface MinimaxResult {
 const MAX_DEPTH = 64;
 const WIN_SCORE = 99_999;
 const MAX_PLACEMENTS_PER_TILE = 4;
+const ASPIRATION_WINDOW = 50;
+
+/**
+ * Score for a decided game, from P1's perspective. Adding the remaining depth
+ * makes a win found sooner (more depth left) worth more than one found later,
+ * so the search actually converts won positions instead of wandering.
+ */
+function terminalScore(p1Wins: boolean, depth: number): number {
+  const s = WIN_SCORE + Math.max(depth, 0);
+  return p1Wins ? s : -s;
+}
 
 // ---------------------------------------------------------------------------
 // Killer move table — 2 slots per depth
@@ -155,6 +166,10 @@ function applyAndSearch(
 // ---------------------------------------------------------------------------
 // Evaluate chance node with static placement pruning
 // Only fully searches top-N placements per drawn tile (sorted by static eval).
+//
+// Each outcome is searched with a full window: the node's value is an
+// expectation, and averaging alpha-beta *bounds* (from cutoffs) instead of
+// exact scores gives a meaningless number.
 // ---------------------------------------------------------------------------
 
 function evaluateChanceNode(
@@ -162,8 +177,6 @@ function evaluateChanceNode(
   state: GameState,
   mover: Player,
   depth: number,
-  alpha: number,
-  beta: number,
   maximizing: boolean,
   hash: number,
   stats: {nodes: number},
@@ -172,8 +185,6 @@ function evaluateChanceNode(
 
   for (const {probability, placements} of drawOutcomes) {
     let bestPlacementScore = maximizing ? -Infinity : Infinity;
-    let innerAlpha = alpha;
-    let innerBeta = beta;
 
     // Static pruning: sort placements by tile value, only search top N
     const sorted = placements.length > MAX_PLACEMENTS_PER_TILE
@@ -185,17 +196,11 @@ function evaluateChanceNode(
       : placements;
 
     for (const move of sorted) {
-      const score = applyAndSearch(state, move, mover, depth - 1, innerAlpha, innerBeta, !maximizing, hash, stats, true);
+      const score = applyAndSearch(state, move, mover, depth - 1, -Infinity, Infinity, !maximizing, hash, stats, true);
       if (score === null) continue;
-
-      if (maximizing) {
-        bestPlacementScore = Math.max(bestPlacementScore, score);
-        innerAlpha = Math.max(innerAlpha, bestPlacementScore);
-      } else {
-        bestPlacementScore = Math.min(bestPlacementScore, score);
-        innerBeta = Math.min(innerBeta, bestPlacementScore);
-      }
-      if (innerAlpha >= innerBeta) break;
+      bestPlacementScore = maximizing
+        ? Math.max(bestPlacementScore, score)
+        : Math.min(bestPlacementScore, score);
     }
 
     expectedValue += probability * bestPlacementScore;
@@ -220,9 +225,8 @@ function minimax(
 ): number {
   stats.nodes++;
 
-  if (depth <= 0 || state.status !== 'active') {
-    return evaluate(state);
-  }
+  if (state.status !== 'active') return terminalScore(state.status === 'P1_wins', depth);
+  if (depth <= 0) return evaluate(state);
 
   // Transposition table probe
   const ttHit = ttProbe(hash, depth, alpha, beta);
@@ -249,9 +253,7 @@ function minimax(
 
   const allMoves = generatePseudoLegalMoves(state);
 
-  if (allMoves.length === 0) {
-    return maximizing ? -WIN_SCORE : WIN_SCORE;
-  }
+  if (allMoves.length === 0) return terminalScore(!maximizing, depth);
 
   const {boardMoves, drawOutcomes} = splitMoves(allMoves, state);
   const pvEncoded = ttProbeMove(hash);
@@ -315,7 +317,7 @@ function minimax(
   // Chance nodes — search 3 plies shallower than board moves
   if (drawOutcomes.length > 0 && alpha < beta) {
     const drawDepth = Math.max(depth - 3, 0);
-    const drawScore = evaluateChanceNode(drawOutcomes, state, mover, drawDepth, alpha, beta, maximizing, hash, stats);
+    const drawScore = evaluateChanceNode(drawOutcomes, state, mover, drawDepth, maximizing, hash, stats);
     hasLegalMove = true;
     if (maximizing) {
       bestScore = Math.max(bestScore, drawScore);
@@ -326,7 +328,7 @@ function minimax(
     }
   }
 
-  if (!hasLegalMove) return maximizing ? -WIN_SCORE : WIN_SCORE;
+  if (!hasLegalMove) return terminalScore(!maximizing, depth);
 
   // Determine TT flag from original bounds
   if (bestScore <= origAlpha) {
@@ -388,20 +390,12 @@ export function findBestMove(state: GameState, maxDepth = 6): MinimaxResult {
   let bestMove: GameMove | null = null;
   let bestScore = maximizing ? -Infinity : Infinity;
 
-  // --- Iterative deepening ---
-  for (let d = 1; d <= maxDepth; d++) {
+  // One full root search at depth `d` within the window (alpha, beta).
+  const searchRoot = (d: number, alpha: number, beta: number) => {
     clearKillers();
 
     let iterBestMove: GameMove | null = null;
     let iterBestScore = maximizing ? -Infinity : Infinity;
-    let alpha = -Infinity;
-    let beta = Infinity;
-
-    // Aspiration window (from depth 3+, use prior iteration score)
-    if (d >= 3 && bestMove !== null && Number.isFinite(bestScore)) {
-      alpha = bestScore - 50;
-      beta = bestScore + 50;
-    }
 
     const pvEncoded = ttProbeMove(rootHash);
     const orderedBoardMoves = orderMoves(boardMoves, state, pvEncoded, d);
@@ -429,12 +423,13 @@ export function findBestMove(state: GameState, maxDepth = 6): MinimaxResult {
 
     // Evaluate draw outcomes
     if (drawOutcomes.length > 0) {
-      const drawScore = evaluateChanceNode(drawOutcomes, state, mover, d, alpha, beta, maximizing, rootHash, stats);
+      const drawScore = evaluateChanceNode(drawOutcomes, state, mover, d, maximizing, rootHash, stats);
       const drawIsBetter = maximizing ? drawScore > iterBestScore : drawScore < iterBestScore;
 
       if (drawIsBetter) {
         iterBestScore = drawScore;
-        // Pick the best placement for a random draw
+        // Draw for real (uniformly from the bag), then choose the best square
+        // for the revealed tile — the same order as the physical game.
         const bag = state.bags[state.currentPlayer];
         const randomTile = bag[Math.floor(Math.random() * bag.length)];
         const tilePlacements = drawOutcomes.find(o => o.tileName === randomTile)?.placements ?? [];
@@ -455,16 +450,26 @@ export function findBestMove(state: GameState, maxDepth = 6): MinimaxResult {
       }
     }
 
-    // Aspiration window fail — re-search with full window
-    if ((alpha !== -Infinity || beta !== Infinity) &&
-        (iterBestScore <= alpha - 50 || iterBestScore >= beta + 50)) {
-      // Fall-through: the result from this iteration is still the best we have,
-      // but next iteration will use full window since bestScore will be way off
+    return {move: iterBestMove, score: iterBestScore};
+  };
+
+  // --- Iterative deepening ---
+  for (let d = 1; d <= maxDepth; d++) {
+    // Aspiration window around the previous iteration's score (depth 3+).
+    // If the true score lands outside it, root moves return only bounds and
+    // the "best" move is meaningless — so re-search with a full window.
+    const useWindow = d >= 3 && bestMove !== null && Number.isFinite(bestScore);
+    const lo = useWindow ? bestScore - ASPIRATION_WINDOW : -Infinity;
+    const hi = useWindow ? bestScore + ASPIRATION_WINDOW : Infinity;
+
+    let iter = searchRoot(d, lo, hi);
+    if (useWindow && (iter.score <= lo || iter.score >= hi)) {
+      iter = searchRoot(d, -Infinity, Infinity);
     }
 
-    if (iterBestMove !== null) {
-      bestMove = iterBestMove;
-      bestScore = iterBestScore;
+    if (iter.move !== null) {
+      bestMove = iter.move;
+      bestScore = iter.score;
     }
   }
 

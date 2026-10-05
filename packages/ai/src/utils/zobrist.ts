@@ -160,15 +160,23 @@ export function hashAfterMove(oldHash: number, state: GameState, undo: UndoRecor
       break;
     }
     case 'command': {
+      // Commanded tile relocates without flipping
       const commanded = state.tiles.get(undo.commandedTileId!)!;
       const ti = TILE_NAME_INDEX.get(commanded.defName)!;
       const ownerBase = commanded.owner === 'P1' ? 0 : 2;
-      const oldSideBit = undo.commandedPrevSide === 'A' ? 0 : 1;
-      const newSideBit = commanded.side === 'A' ? 0 : 1;
+      const sideBit = commanded.side === 'A' ? 0 : 1;
       const oldPos = undo.commandedPrevPosition!;
 
-      h ^= Z.board[oldPos.row][oldPos.col][ti][ownerBase + oldSideBit];
-      h ^= Z.board[commanded.position.row][commanded.position.col][ti][ownerBase + newSideBit];
+      h ^= Z.board[oldPos.row][oldPos.col][ti][ownerBase + sideBit];
+      h ^= Z.board[commanded.position.row][commanded.position.col][ti][ownerBase + sideBit];
+
+      // Commander stays in place but flips side
+      const commander = state.tiles.get(undo.movedTileId!)!;
+      const cti = TILE_NAME_INDEX.get(commander.defName)!;
+      const cOwnerBase = commander.owner === 'P1' ? 0 : 2;
+      const cPos = commander.position;
+      h ^= Z.board[cPos.row][cPos.col][cti][cOwnerBase + (undo.prevSide === 'A' ? 0 : 1)];
+      h ^= Z.board[cPos.row][cPos.col][cti][cOwnerBase + (commander.side === 'A' ? 0 : 1)];
 
       if (undo.commandCapturedTile) {
         const cap = undo.commandCapturedTile;

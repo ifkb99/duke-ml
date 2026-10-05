@@ -35,10 +35,10 @@ export interface LlmAgentConfig {
 
 const RULES_PREAMBLE = `You are playing The Duke, a 6x6 tile-based strategy game.
 Rules summary:
-- Each tile has two sides with different movement patterns. EVERY TIME a tile moves, strikes, or is commanded, it FLIPS to its other side. Track sides carefully: a tile's legal moves next turn come from its NEW side.
+- Each tile has two sides with different movement patterns. EVERY TIME a tile moves, strikes, or issues a command, it FLIPS to its other side (a commanded tile does NOT flip). Track sides carefully: a tile's legal moves next turn come from its NEW side.
 - Win by capturing the enemy Duke, or by leaving the opponent with no legal moves.
 - You may also PLACE a new tile from your bag on an empty square orthogonally adjacent to your Duke (this does not flip anything).
-- Move types: step (blocked by pieces on the path), slide (any distance until blocked), jump (ignores intervening pieces), jump-slide (slides, jumping over blockers), strike (captures at a square WITHOUT moving), command (moves a friendly adjacent-pattern piece one orthogonal square).
+- Move types: step (blocked by pieces on the path), slide (any distance until blocked), jump (ignores intervening pieces), jump-slide (slides, jumping over blockers), strike (captures at a square WITHOUT moving), command (moves a friendly piece standing on one of the commander's command squares to another of its command squares; only the commander flips).
 - Squares are written like c3 (columns a-f, rows 1-6). You cannot make a move that leaves your own Duke capturable ("in check").`;
 
 const FORMAT_NO_COT = `Respond with ONLY the move, nothing else, in one of these exact formats:

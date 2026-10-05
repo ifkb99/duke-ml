@@ -37,11 +37,15 @@ describe('Setup phase', () => {
     expect(state.bags.P2).toHaveLength(18);
   });
 
-  it('p1_duke targets are all cells on row 0', () => {
+  it('p1_duke targets are the two center cells of row 0', () => {
     const state = createInitialState();
     const targets = getSetupTargets(state);
-    expect(targets).toHaveLength(6);
-    for (const t of targets) expect(t.row).toBe(0);
+    expect(targets).toEqual([{ row: 0, col: 2 }, { row: 0, col: 3 }]);
+  });
+
+  it('rejects a Duke placed off-center on the back row', () => {
+    const state = createInitialState();
+    expect(() => applySetupPlacement(state, { row: 0, col: 0 })).toThrow();
   });
 
   it('full setup flow places Duke and 2 Footmen for each player', () => {
@@ -68,8 +72,7 @@ describe('Setup phase', () => {
 
     // P2 Duke at (5, 3)
     const p2DukeTargets = getSetupTargets(state);
-    expect(p2DukeTargets).toHaveLength(6);
-    for (const t of p2DukeTargets) expect(t.row).toBe(5);
+    expect(p2DukeTargets).toEqual([{ row: 5, col: 2 }, { row: 5, col: 3 }]);
     state = applySetupPlacement(state, { row: 5, col: 3 });
     expect(state.setupPhase).toBe('p2_footman1');
 
@@ -94,13 +97,14 @@ describe('Setup phase', () => {
 
   it('footman targets are orthogonally adjacent to Duke', () => {
     let state = createInitialState();
-    state = applySetupPlacement(state, { row: 0, col: 0 });
+    state = applySetupPlacement(state, { row: 0, col: 2 });
 
     const targets = getSetupTargets(state);
-    expect(targets).toContainEqual({ row: 1, col: 0 });
+    expect(targets).toContainEqual({ row: 1, col: 2 });
     expect(targets).toContainEqual({ row: 0, col: 1 });
-    // (0,-1) and (-1,0) are out of bounds
-    expect(targets).toHaveLength(2);
+    expect(targets).toContainEqual({ row: 0, col: 3 });
+    // (-1,2) is out of bounds
+    expect(targets).toHaveLength(3);
   });
 
   it('rejects invalid setup placement', () => {
