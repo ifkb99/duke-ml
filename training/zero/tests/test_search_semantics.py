@@ -115,7 +115,7 @@ def test_search_takes_the_duke_and_terminal_nodes_are_zero():
     capture = (1 * 6 + 3) * R.N_SQ + (0 * 6 + 3)
     legal = np.flatnonzero(np.asarray(s.legal))
     assert capture in legal and 2 < len(legal) <= 16
-    search = jax.jit(S.make_search(uniform_forward, 32, 16))
+    search = jax.jit(S.make_search(uniform_forward, 32, 16, 32))
     states = stack([s, s])
     out = search(None, jax.random.key(0), states, 0.0)
     assert (np.asarray(out.action) == capture).all()

@@ -8,7 +8,7 @@ from training.zero.network import make_forward
 graphdef, params, ckpt = T.load_params(Path(f'runs/az1/{sys.argv[1]}.pkl'))
 params = jax.device_put(params); forward = make_forward(graphdef)
 B = 256
-sp = SP.make_selfplay(S.make_search(forward, 32, 16, 16), unroll=32)
+sp = SP.make_selfplay(S.make_search(forward, 32), unroll=32)
 states = jax.vmap(E.init)(jax.random.split(jax.random.key(10), B))
 asm, parts = RP.Assembler(B), []
 for i in range(12):

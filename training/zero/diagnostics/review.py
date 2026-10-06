@@ -59,7 +59,7 @@ def review(name, path, sims, bench):
 
     chosen = {'policy': pol}
     for s in sims:
-        search = jax.jit(S.make_search(forward, s, 16, 16))
+        search = jax.jit(S.make_search(forward, s))
         acts = np.zeros(n, np.int64)
         for i in range(0, n, 256):
             states = BM.states_from_arrays({k: bench[k][i:i + 256] for k in BM.STATE_KEYS})
@@ -100,7 +100,7 @@ def review(name, path, sims, bench):
 
     # Calibration on its own self-play.
     from training.zero.evaluator import calibration
-    sp = SP.make_selfplay(S.make_search(forward, 32, 16, 16), unroll=32)
+    sp = SP.make_selfplay(S.make_search(forward, 32), unroll=32)
     cal, table = calibration(forward, params, jax.random.key(11), sp)
     out['calibration'] = cal
     out['calibration_table'] = table

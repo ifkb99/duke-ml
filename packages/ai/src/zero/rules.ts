@@ -13,6 +13,10 @@
  */
 
 import {ALL_TILES, BAG_TILE_NAMES, BOARD_SIZE} from '@the-duke/engine';
+import spec from './spec.json';
+
+/** Constants shared with the Python training code (spec.json). */
+export const SPEC = spec;
 
 export const BOARD = BOARD_SIZE;                       // 6
 export const N_SQ = BOARD * BOARD;                     // 36
@@ -31,8 +35,8 @@ export const INITIAL_BAG = new Int32Array(N_TYPES);
 }
 
 // Neighbor directions, in the order used by the action encoding.
-export const DIRS8: [number, number][] = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
-export const DIRS4: [number, number][] = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+export const DIRS8 = spec.actions.dirs8 as [number, number][];
+export const DIRS4 = spec.actions.dirs4 as [number, number][];
 
 // Action space (see rules.py).
 export const N_MOVE_ACTIONS = N_SQ * N_SQ;             // 1296: from * 36 + to

@@ -25,7 +25,7 @@
  */
 
 import {DRAWING, type State, chanceProbs, stepChance, stepDecision} from './env.js';
-import {N_ACTIONS, N_TYPES} from './rules.js';
+import {N_ACTIONS, N_TYPES, SPEC} from './rules.js';
 
 export interface NetOutput {
   logits: Float32Array;   // [3605] policy logits
@@ -37,10 +37,11 @@ export type Evaluate = (states: State[]) => Promise<NetOutput[]>;
 
 export interface SearchOptions {
   simulations: number;
-  maxConsidered?: number;       // root actions in the first halving round (16)
-  maxDepth?: number;            // tree edges per simulation; 2 per move (16)
+  maxConsidered?: number;       // root actions in the first halving round (spec.json)
+  maxDepth?: number;            // tree edges per simulation; 2 per move (spec.json)
   gumbel?: ArrayLike<number>;   // [3605] root noise; omit for the strongest play
   maxBatch?: number;            // cap on positions per network call (64)
+  valueScale?: number;          // search values vs prior (spec.json)
 }
 
 export interface SearchResult {
@@ -54,11 +55,13 @@ export interface SearchResult {
   batches: number;              // network calls
 }
 
-// mctx constants: qtransform_completed_by_mix_value and score_considered.
-const VALUE_SCALE = 0.1;
-const MAXVISIT_INIT = 50;
-const RESCALE_EPS = 1e-8;
-const TINY = 1.1754944e-38;   // float32 tiny, as mctx clamps prior probabilities
+// qtransform_completed_by_mix_value settings (shared with search.py), and two
+// constants inside mctx itself: its clamp on prior probabilities (float32
+// tiny) and score_considered's floor.
+const MAXVISIT_INIT = SPEC.search.maxvisitInit;
+const RESCALE_EPS = SPEC.search.rescaleEpsilon;
+const CHANCE_TIE = SPEC.search.chanceTieTolerance;
+const TINY = 1.1754944e-38;
 const LOW_LOGIT = -1e9;
 
 class DecisionNode {
@@ -118,7 +121,7 @@ function softmax(x: ArrayLike<number>): Float64Array {
  * Illegal actions are unvisited children with zero prior: they get the mixed
  * value, which also enters the min/max rescaling.
  */
-function completedQ(n: DecisionNode): Float64Array {
+function completedQ(n: DecisionNode, valueScale: number): Float64Array {
   const k = n.actions.length;
   const probs = softmax(n.logits);
   let sumVisits = 0, sumProbs = 0, weighted = 0, maxVisit = 0;
@@ -139,14 +142,14 @@ function completedQ(n: DecisionNode): Float64Array {
     q[i] = n.childVisits[i] > 0 ? n.childValue[i] : mixed;
     lo = Math.min(lo, q[i]); hi = Math.max(hi, q[i]);
   }
-  const scale = (MAXVISIT_INIT + maxVisit) * VALUE_SCALE / Math.max(hi - lo, RESCALE_EPS);
+  const scale = (MAXVISIT_INIT + maxVisit) * valueScale / Math.max(hi - lo, RESCALE_EPS);
   for (let i = 0; i < k; i++) q[i] = (q[i] - lo) * scale;
   return q;
 }
 
 /** Below the root: the child most under-visited relative to the improved policy. */
-function interiorSelect(n: DecisionNode): number {
-  const q = completedQ(n);
+function interiorSelect(n: DecisionNode, valueScale: number): number {
+  const q = completedQ(n, valueScale);
   const probs = softmax(n.logits.map((l, i) => l + q[i]));
   let total = 0;
   for (let i = 0; i < n.actions.length; i++) total += n.childVisits[i];
@@ -163,14 +166,14 @@ function interiorSelect(n: DecisionNode): number {
 function chanceSelect(n: ChanceNode): number {
   let top = -Infinity;
   for (let c = 0; c < N_TYPES; c++) top = Math.max(top, n.probs[c] / (n.childVisits[c] + 1));
-  for (let c = 0; c < N_TYPES; c++) if (n.probs[c] / (n.childVisits[c] + 1) >= top - 1e-6) return c;
+  for (let c = 0; c < N_TYPES; c++) if (n.probs[c] / (n.childVisits[c] + 1) >= top - CHANCE_TIE) return c;
   return 0;
 }
 
 /** The Gumbel root score of every legal root action (-Infinity if not a candidate). */
 function rootScores(root: DecisionNode, gumbel: ArrayLike<number> | undefined, target: number,
-                    visits: ArrayLike<number>): Float64Array {
-  const q = completedQ(root);
+                    visits: ArrayLike<number>, valueScale: number): Float64Array {
+  const q = completedQ(root, valueScale);
   let maxLogit = -Infinity;
   for (const l of root.logits) maxLogit = Math.max(maxLogit, l);
   return Float64Array.from(root.actions, (a, i) => {
@@ -233,9 +236,10 @@ interface Pending {
 
 export async function search(rootState: State, evaluate: Evaluate, opts: SearchOptions): Promise<SearchResult> {
   const sims = opts.simulations;
-  const maxConsidered = opts.maxConsidered ?? 16;
-  const maxDepth = opts.maxDepth ?? 16;
+  const maxConsidered = opts.maxConsidered ?? SPEC.search.maxConsidered;
+  const maxDepth = opts.maxDepth ?? SPEC.search.maxDepth;
   const maxBatch = opts.maxBatch ?? 64;
+  const valueScale = opts.valueScale ?? SPEC.search.valueScale;
   let evaluations = 1, batches = 1;
 
   const [rootNet] = await evaluate([rootState]);
@@ -250,7 +254,7 @@ export async function search(rootState: State, evaluate: Evaluate, opts: SearchO
       if (node instanceof DecisionNode && node.state.done) {
         return {terminal: node, parent: node, idx: 0, state: node.state, existing: null, net: null, needsNet: false};
       }
-      if (depth > 0) idx = node instanceof DecisionNode ? interiorSelect(node) : chanceSelect(node);
+      if (depth > 0) idx = node instanceof DecisionNode ? interiorSelect(node, valueScale) : chanceSelect(node);
       const child: Node | null = node.child[idx];
       depth += 1;
       if (child && depth < maxDepth) { node = child; continue; }
@@ -329,7 +333,7 @@ export async function search(rootState: State, evaluate: Evaluate, opts: SearchO
     const visits = Int32Array.from(root.childVisits);
     const group: Pending[] = [];
     for (let b = 0; b < size; b++) {
-      const rootIdx = argmax(rootScores(root, opts.gumbel, target, visits));
+      const rootIdx = argmax(rootScores(root, opts.gumbel, target, visits, valueScale));
       visits[rootIdx] += 1;
       group.push(simulate(rootIdx));
     }
@@ -338,10 +342,10 @@ export async function search(rootState: State, evaluate: Evaluate, opts: SearchO
   }
 
   // The result, read off the root as Gumbel MuZero does.
-  const q = completedQ(root);
+  const q = completedQ(root, valueScale);
   let maxVisit = 0;
   for (const v of root.childVisits) maxVisit = Math.max(maxVisit, v);
-  const actionIdx = argmax(rootScores(root, opts.gumbel, maxVisit, root.childVisits));
+  const actionIdx = argmax(rootScores(root, opts.gumbel, maxVisit, root.childVisits, valueScale));
   const improved = softmax(root.logits.map((l, j) => l + q[j]));
   const weights = new Float64Array(N_ACTIONS);
   const visitMap = new Map<number, number>(), qMap = new Map<number, number>();

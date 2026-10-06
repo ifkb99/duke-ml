@@ -74,7 +74,7 @@ def sample_positions(ckpt: Path, n: int, seed: int) -> dict:
     from training.zero.train import load_params
     graphdef, params, _ = load_params(ckpt)
     params = jax.device_put(params)
-    sp = SP.make_selfplay(S.make_search(make_forward(graphdef), 32, 16, 16), unroll=8)
+    sp = SP.make_selfplay(S.make_search(make_forward(graphdef), 32), unroll=8)
     states = jax.vmap(E.init)(jax.random.split(jax.random.key(seed), 512))
     rng = np.random.default_rng(seed)
     pool = {k: [] for k in STATE_KEYS}
@@ -198,7 +198,7 @@ def move_quality(scores, actions) -> dict:
 
 def score_network(forward, params, bench: dict, simulations=32, chunk=256, search=None) -> dict:
     """Benchmark metrics for the policy's top move and for the search's move."""
-    search = search or jax.jit(S.make_search(forward, simulations, 16, 16))
+    search = search or jax.jit(S.make_search(forward, simulations))
     n = len(bench['ply'])
     pol, srch = np.zeros(n, np.int64), np.zeros(n, np.int64)
     for i in range(0, n, chunk):

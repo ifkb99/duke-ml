@@ -12,7 +12,7 @@ from training.zero.network import make_forward, observe_batch
 
 graphdef, params, ckpt = T.load_params(Path(f'runs/az1/{sys.argv[1]}.pkl'))
 params = jax.device_put(params); forward = make_forward(graphdef)
-sp = SP.make_selfplay(S.make_search(forward, 32, 16, 16), unroll=int(sys.argv[2]) if len(sys.argv) > 2 else 40)
+sp = SP.make_selfplay(S.make_search(forward, 32), unroll=int(sys.argv[2]) if len(sys.argv) > 2 else 40)
 states = jax.vmap(E.init)(jax.random.split(jax.random.key(1), 256))
 states, _ = sp(params, states, jax.random.key(2))
 

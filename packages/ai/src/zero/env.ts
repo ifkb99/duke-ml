@@ -16,11 +16,13 @@
 import {
   BETWEEN, bIdx, CMD_BASE, CMD_DIR, cIdx, DRAW_ACTION, DUKE, FLIP, MOVE_OK, N_ACTIONS,
   N_MOVE_ACTIONS, N_SQ, N_TYPES, NBR4, NBR8, NEEDS_CLEAR, PLACE_BASE, STRIKE_OK, tIdx,
+  SPEC,
 } from './rules.js';
 
-export const MAX_PLY = 200;     // turns before the game is a draw
-export const DRAWING = -2;      // `pending` for a draw afterstate
-export const NONE = -1;         // `pending` with no tile in hand
+export const MAX_PLY = SPEC.env.maxPly;           // turns before the game is a draw
+export const DRAWING = SPEC.env.pendingDrawing;   // `pending` for a draw afterstate
+export const NONE = SPEC.env.pendingNone;         // `pending` with no tile in hand
+const BAG_SCALE = SPEC.env.bagFeatureScale;
 
 export interface State {
   tile: Int8Array;      // [36] tile type, -1 = empty
@@ -306,7 +308,7 @@ export function observe(s: State, planes: Float32Array, features: Float32Array,
     planes[planesOff + q * N_PLANES + s.owner[q] * 2 * N_TYPES + s.tile[q] * 2 + s.side[q]] = 1;
   }
   const f = featuresOff;
-  for (let i = 0; i < 2 * N_TYPES; i++) features[f + i] = s.bags[i] / 3;
+  for (let i = 0; i < 2 * N_TYPES; i++) features[f + i] = s.bags[i] / BAG_SCALE;
   for (let i = 0; i < N_TYPES; i++) features[f + 2 * N_TYPES + i] = s.pending === i ? 1 : 0;
   features[f + 3 * N_TYPES] = s.pending === DRAWING ? 1 : 0;
   features[f + 3 * N_TYPES + 1] = s.ply / MAX_PLY;

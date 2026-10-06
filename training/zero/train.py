@@ -80,14 +80,15 @@ class Config:
                                    # would otherwise idle between SGD steps (0 = off);
                                    # balanced so both GPUs finish together (sp_gpu*_s)
     unroll: int = 32               # moves per game per iteration
-    simulations: int = 32
+    simulations: int = S.SEARCH['simulations']
     full_simulations: int = 0      # playout cap randomization (KataGo): a `full_fraction`
     full_fraction: float = 0.25    # of self-play calls search this deep and give the
     full_chunks: int = 4           # policy targets; the rest only move games along and
                                    # give value targets (0 = off). Deep searches run in
                                    # `full_chunks` pieces to fit their trees in memory.
-    max_considered: int = 16
-    max_depth: int = 16            # tree edges per simulation (2 per move: decision + chance)
+    max_considered: int = S.SEARCH['maxConsidered']
+    max_depth: int = S.SEARCH['maxDepth']   # tree edges per simulation (2 per move: decision + chance)
+    value_scale: float = S.SEARCH['valueScale']   # search values vs prior (search.make_search)
     # learning
     batch: int = 1024
     lr: float = 3e-4
@@ -496,13 +497,14 @@ def main(cfg: Config):
     loss_eval = jax.jit(lambda p, b: loss_fn(p, b)[1])
     diagnostics = make_diagnostics(forward)
     chunk = cfg.steps_per_call
-    make = lambda: S.make_search(forward, cfg.simulations, cfg.max_considered, cfg.max_depth)
+    make = lambda: S.make_search(forward, cfg.simulations, cfg.max_considered, cfg.max_depth,
+                                 cfg.value_scale)
     search = jax.jit(make())
     selfplay = SP.make_selfplay(make(), cfg.unroll)
     if cfg.full_simulations:
         fast_selfplay = SP.make_selfplay(make(), cfg.unroll, policy_targets=False)
         full_selfplay = SP.make_selfplay(S.chunked(
-            S.make_search(forward, cfg.full_simulations, cfg.max_considered, cfg.max_depth),
+            S.make_search(forward, cfg.full_simulations, cfg.max_considered, cfg.max_depth, cfg.value_scale),
             cfg.full_chunks), cfg.unroll)
     from training.zero import tactics as TA
     tactics = TA.load() if cfg.tactics_every and TA.TACTICS.exists() else None

@@ -12,7 +12,7 @@ agents, search = {}, None
 for n in names:
     graphdef, params, _ = T.load_params(run / f'{n}.pkl')
     if search is None:
-        search = S.make_search(make_forward(graphdef), 32, 16, 16)
+        search = S.make_search(make_forward(graphdef), 32)
     agents[n] = AR.Agent('net', name=n, params=jax.device_put(params), search=search)
 games = int(sys.argv[1])
 for a, b in [('ckpt_002200', 'ckpt_000200'), ('ckpt_001000', 'ckpt_000200'),

@@ -37,6 +37,8 @@ from pathlib import Path
 import numpy as np
 
 _DATA = json.loads((Path(__file__).parent / 'tiles.json').read_text())
+# Constants shared with the TypeScript port (env, action numbering, search defaults).
+SPEC = json.loads((Path(__file__).resolve().parents[2] / 'packages/ai/src/zero/spec.json').read_text())
 
 BOARD = _DATA['boardSize']                     # 6
 N_SQ = BOARD * BOARD                           # 36
@@ -58,9 +60,9 @@ for _name in _bag:
 DUKE_START_COLS = (BOARD // 2 - 1, BOARD // 2)
 
 # Neighbor directions, in a fixed order used by the command action encoding.
-DIRS8 = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+DIRS8 = [tuple(d) for d in SPEC['actions']['dirs8']]
 # Orthogonal directions, in the order used by the place action encoding.
-DIRS4 = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+DIRS4 = [tuple(d) for d in SPEC['actions']['dirs4']]
 
 
 def sq(r: int, c: int) -> int:

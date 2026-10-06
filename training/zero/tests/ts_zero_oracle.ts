@@ -122,7 +122,7 @@ async function handle(req: Json): Promise<Json> {
     case 'search': {
       const r = await search(fromJson(req.state), onnx ?? testNet, {
         simulations: req.simulations, maxConsidered: req.maxConsidered, maxDepth: req.maxDepth,
-        gumbel: req.gumbel, maxBatch: req.maxBatch});
+        gumbel: req.gumbel, maxBatch: req.maxBatch, valueScale: req.valueScale});
       const legal = ones(fromJson(req.state).legal);
       reply = {action: r.action, weights: legal.map(a => r.weights[a]), searchValue: r.searchValue,
         rootValue: r.rootValue, evaluations: r.evaluations, batches: r.batches,

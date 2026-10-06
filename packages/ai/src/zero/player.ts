@@ -15,6 +15,8 @@ import {type Evaluate, search, type SearchResult} from './search.js';
 export interface ZeroPlayerOptions {
   simulations: number;
   maxConsidered?: number;
+  maxDepth?: number;
+  valueScale?: number;
   /** Root noise: 0 plays the search's best move; ~1 plays like self-play (weaker, varied). */
   noise?: number;
   maxBatch?: number;
@@ -50,7 +52,8 @@ async function decide(s: State, evaluate: Evaluate, opts: ZeroPlayerOptions,
   if (forced >= 0) return forced;
   const random = opts.random ?? Math.random;
   const r: SearchResult = await search(s, evaluate, {
-    simulations: opts.simulations, maxConsidered: opts.maxConsidered, maxBatch: opts.maxBatch,
+    simulations: opts.simulations, maxConsidered: opts.maxConsidered, maxDepth: opts.maxDepth,
+    valueScale: opts.valueScale, maxBatch: opts.maxBatch,
     gumbel: opts.noise ? gumbel(N_ACTIONS, opts.noise, random) : undefined,
   });
   info.value = r.searchValue;

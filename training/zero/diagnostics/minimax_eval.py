@@ -13,7 +13,7 @@ jax.config.update('jax_compilation_cache_dir', 'runs/.jax_cache')
 graphdef, params, ckpt = T.load_params(Path(sys.argv[1]))
 games, depths = int(sys.argv[2]), [int(d) for d in sys.argv[3:]]
 params = jax.device_put(params)
-search = jax.jit(S.make_search(make_forward(graphdef), 32, 16, 16))
+search = jax.jit(S.make_search(make_forward(graphdef), 32))
 print(f"iteration {ckpt['iteration']}", flush=True)
 with MinimaxPool(16) as pool:
     for d in depths:

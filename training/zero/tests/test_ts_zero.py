@@ -123,21 +123,22 @@ def search_positions():
     return out
 
 
-@pytest.mark.parametrize('sims,considered,depth,noise', [
-    (32, 16, 16, False), (32, 16, 16, True), (64, 8, 4, True), (24, 4, 16, False)])
-def test_search_matches_jax(oracle, search_positions, sims, considered, depth, noise):
+@pytest.mark.parametrize('sims,considered,depth,noise,value_scale', [
+    (32, 16, 16, False, 0.1), (32, 16, 16, True, 0.1), (64, 8, 4, True, 0.1), (24, 4, 16, False, 0.1),
+    (32, 16, 16, True, 0.5)])
+def test_search_matches_jax(oracle, search_positions, sims, considered, depth, noise, value_scale):
     from training.zero import search as S
     from training.zero.tests.conftest import stack
     p = _test_net()
     oracle.ask({'op': 'net', **{k: v.tolist() for k, v in p.items()}})
     states = stack(search_positions)
     rng = jax.random.key(7)
-    out = jax.jit(S.make_search(_test_forward, sims, considered, depth), static_argnums=3)(
+    out = jax.jit(S.make_search(_test_forward, sims, considered, depth, value_scale), static_argnums=3)(
         p, rng, states, 1.0 if noise else 0.0)
     gumbel = np.asarray(jax.random.gumbel(jax.random.split(rng)[1], (len(search_positions), R.N_ACTIONS)))
     for b, s in enumerate(search_positions):
         req = {'op': 'search', 'state': to_json(s), 'simulations': sims, 'maxConsidered': considered,
-               'maxDepth': depth}
+               'maxDepth': depth, 'valueScale': value_scale}
         if noise:
             req['gumbel'] = gumbel[b].tolist()
         ts = oracle.ask(req)
@@ -217,7 +218,7 @@ def test_onnx_search_matches_jax(oracle, search_positions, tmp_path):
                                                dtype=jnp.float32, rngs=nnx.Rngs(0)))
     nnx.replace_by_pure_dict(params32, nnx.to_pure_dict(params))
     positions = search_positions[:16]
-    out = jax.jit(S.make_search(make_forward(graphdef), 32, 16, 16), static_argnums=3)(
+    out = jax.jit(S.make_search(make_forward(graphdef), 32), static_argnums=3)(
         params32, jax.random.key(0), stack(positions), 0.0)
     agree = 0
     for b, s in enumerate(positions):

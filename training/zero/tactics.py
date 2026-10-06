@@ -45,7 +45,7 @@ def fresh_positions(ckpt: Path, n: int, seed: int) -> dict:
     from training.zero.train import load_params
     graphdef, params, _ = load_params(ckpt)
     params = jax.device_put(params)
-    sp = SP.make_selfplay(S.make_search(make_forward(graphdef), 32, 16, 16), unroll=8)
+    sp = SP.make_selfplay(S.make_search(make_forward(graphdef), 32), unroll=8)
     states = jax.vmap(E.init)(jax.random.split(jax.random.key(seed), 1024))
     parts, seen, total, t = [], set(), 0, time.time()
     for i in range(10_000):
@@ -124,7 +124,7 @@ def score_network(forward, params, t: dict, simulations=(32, 128), chunk=256, se
     simulation count (`searches`: already-jitted searches by simulation count)."""
     n = len(t['ply'])
     chosen = {'policy': np.zeros(n, np.int64), **{f'search{s}': np.zeros(n, np.int64) for s in simulations}}
-    searches = {s: (searches or {}).get(s) or jax.jit(S.make_search(forward, s, 16, 16)) for s in simulations}
+    searches = {s: (searches or {}).get(s) or jax.jit(S.make_search(forward, s)) for s in simulations}
     for i in range(0, n, chunk):
         states = BM.states_from_arrays({k: t[k][i:i + chunk] for k in KEYS + ('player',)})
         logits, _ = forward(params, *observe_batch(states))

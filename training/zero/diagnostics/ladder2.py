@@ -13,7 +13,7 @@ a_path, b_path, games = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
 agents = []
 for p in (a_path, b_path):
     graphdef, params, ckpt = T.load_params(p)
-    search = jax.jit(S.make_search(make_forward(graphdef), 32, 16, 16))
+    search = jax.jit(S.make_search(make_forward(graphdef), 32))
     agents.append(AR.Agent('net', name=f"{p.parent.name}:{ckpt['iteration']}", params=jax.device_put(params), search=search))
 t = time.time()
 r, _ = AR.play(agents[0], agents[1], games, jax.random.key(int(sys.argv[4]) if len(sys.argv) > 4 else 21))

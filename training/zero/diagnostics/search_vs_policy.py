@@ -10,7 +10,7 @@ games = int(sys.argv[1])
 for name in sys.argv[2:]:
     graphdef, params, ckpt = T.load_params(Path(f'runs/az1/{name}.pkl'))
     params = jax.device_put(params); forward = make_forward(graphdef)
-    search32 = S.make_search(forward, 32, 16, 16)
+    search32 = S.make_search(forward, 32)
 
     # 1. Target statistics on self-play positions.
     sp = SP.make_selfplay(search32, unroll=48)

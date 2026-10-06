@@ -44,6 +44,7 @@ from training.zero.network import observe_batch
 
 A = R.N_ACTIONS     # decision actions
 C = R.N_TYPES       # chance outcomes: which tile type was drawn
+SEARCH = R.SPEC['search']   # defaults shared with the TypeScript port
 NEG = jnp.finfo(jnp.float32).min
 
 
@@ -171,7 +172,7 @@ def _make_selection(num_simulations, max_considered, qtransform):
             score = probs / (visits + 1)
             # Exact ties are common (equal bag counts) and float rounding of
             # softmax(log p) would break them at random: take the lowest outcome.
-            return (jnp.argmax(score >= jnp.max(score) - 1e-6) + A).astype(jnp.int32)
+            return (jnp.argmax(score >= jnp.max(score) - SEARCH['chanceTieTolerance']) + A).astype(jnp.int32)
 
         return jax.lax.cond(is_decision, decision, chance)
 
@@ -268,7 +269,8 @@ class SearchOutput(NamedTuple):
     search_value: jax.Array    # [B] value of the root after search
 
 
-def make_search(forward, num_simulations: int, max_considered: int = 16, max_depth: int | None = None):
+def make_search(forward, num_simulations: int, max_considered: int = SEARCH['maxConsidered'],
+                max_depth: int | None = None, value_scale: float = SEARCH['valueScale']):
     """Returns search(params, rng, states, gumbel_scale) -> SearchOutput.
 
     `states` must be decision states (not afterstates). Use gumbel_scale=1.0
@@ -278,10 +280,18 @@ def make_search(forward, num_simulations: int, max_considered: int = 16, max_dep
     simulation may descend. Batched tree walks run until the deepest walk in
     the whole batch finishes, so one deep forcing line would otherwise stall
     every game in the batch.
+    
+    `value_scale`: how much search values count against the prior (mctx's
+    qtransform_completed_by_mix_value). Defaults: packages/ai/src/zero/spec.json.
     """
-    max_depth = max_depth or num_simulations
+    # A simulation adds one node, so it can't go deeper than the simulation count.
+    max_depth = max_depth or min(SEARCH['maxDepth'], num_simulations)
     recurrent_fn = make_recurrent_fn(forward)
-    qtransform = qtransforms.qtransform_completed_by_mix_value
+    # value_scale weighs search values against the prior: a root action's score
+    # is logit + (maxvisit_init + max visits) * value_scale * Q rescaled to
+    # [0, 1], so at 50 and 0.1 search can shift a move by only ~5 nats early on.
+    qtransform = functools.partial(qtransforms.qtransform_completed_by_mix_value, value_scale=value_scale,
+                                   maxvisit_init=SEARCH['maxvisitInit'], epsilon=SEARCH['rescaleEpsilon'])
     selection = _make_selection(num_simulations, max_considered, qtransform)
 
     def search(params, rng, states: E.State, gumbel_scale=1.0) -> SearchOutput:

@@ -234,8 +234,8 @@ class Evaluator:
         key = (config['channels'], config['blocks'], config.get('policy_head', 'dense'))
         if key not in self.archs:
             fwd = make_forward(graphdef)
-            self.archs[key] = {'forward': fwd, 'search': jax.jit(S.make_search(fwd, SIMS, 16, 16)),
-                               'selfplay': SP.make_selfplay(S.make_search(fwd, SIMS, 16, 16), unroll=32)}
+            self.archs[key] = {'forward': fwd, 'search': jax.jit(S.make_search(fwd, SIMS)),
+                               'selfplay': SP.make_selfplay(S.make_search(fwd, SIMS), unroll=32)}
         return self.archs[key]
 
     def agent(self, run, iteration, path):

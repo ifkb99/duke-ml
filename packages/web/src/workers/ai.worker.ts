@@ -13,11 +13,16 @@ export interface AIWorkerRequest {
 }
 
 // The neural network (training/zero, exported with export_onnx.py), loaded on
-// first use: WebGPU if the browser has it, else WebAssembly on the CPU.
+// first use: WebGPU if the browser has it, else WebAssembly on the CPU. Its
+// .json (also from export_onnx.py) has the search settings it was trained with.
 const MODEL_URL = `${import.meta.env.BASE_URL}models/duke-zero.fp16.onnx`;
-let zero: Promise<ZeroEvaluate> | null = null;
+const META_URL = `${import.meta.env.BASE_URL}models/duke-zero.json`;
+interface SearchSettings { maxConsidered?: number; maxDepth?: number; valueScale?: number }
+let zero: Promise<{evaluate: ZeroEvaluate; search: SearchSettings}> | null = null;
 
-async function loadZero(): Promise<ZeroEvaluate> {
+async function loadZero(): Promise<{evaluate: ZeroEvaluate; search: SearchSettings}> {
+  const meta: {search?: SearchSettings} = await fetch(META_URL).then(r => (r.ok ? r.json() : {})).catch(() => ({}));
+  const search: SearchSettings = meta.search ?? {};   // missing: spec.json defaults
   const ort = await import('onnxruntime-web/all');
   const wasm = await import('onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url');
   const mjs = await import('onnxruntime-web/ort-wasm-simd-threaded.jsep.mjs?url');
@@ -32,7 +37,7 @@ async function loadZero(): Promise<ZeroEvaluate> {
       backend = name;
       console.log(`[AI] network loaded on ${name} in ${(performance.now() - t0).toFixed(0)}ms`
         + (name === 'wasm' ? ` (${ort.env.wasm.numThreads} threads)` : ''));
-      return onnxEvaluate(session, ort.Tensor);
+      return {evaluate: onnxEvaluate(session, ort.Tensor), search};
     } catch (err) {
       console.warn(`[AI] ${name} failed`, err);
     }
@@ -56,9 +61,10 @@ async function zeroMove(serialized: SerializedGameState, simulations: number, re
   const firstMove = zero === null;
   zero ??= loadZero();
   zero.catch(() => { zero = null; });   // let a later move retry
-  const evaluate = await zero;
+  const {evaluate, search} = await zero;
   const loadMs = firstMove ? performance.now() - t0 : 0;
-  const {move, info} = await zeroChooseMove(serialized, evaluate, {simulations});
+  const {move, info} = await zeroChooseMove(serialized, evaluate, {
+    simulations, maxConsidered: search.maxConsidered, maxDepth: search.maxDepth, valueScale: search.valueScale});
   console.log(`[AI] neural: ${simulations} sims, ${info.evaluations} evals in ${info.batches} batches, `
     + `${info.ms.toFixed(0)}ms, value ${info.value.toFixed(2)}${info.drewTile ? `, drew ${info.drewTile}` : ''}`);
   if (report) {

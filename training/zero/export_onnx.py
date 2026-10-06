@@ -237,8 +237,15 @@ def main():
     flops = 2 * sq * 9 * (E.N_PLANES * c + 2 * b * c * c) + 2 * (sq * 8 * c + (sq * 8 + c) * 128)
     flops += (2 * (sq * 32 * c + (sq * 32 + c) * R.N_ACTIONS) if head == 'dense' else
               2 * (sq * c * (sq + N_CMD + 2 * POLICY_KEY) + sq * sq * POLICY_KEY + 5 * c))
+    # The search settings this network was trained with (spec.json defaults
+    # for older checkpoints): the browser searches the same way.
+    run_cfg = {} if a.random else ckpt['config']
+    search = {'simulations': run_cfg.get('simulations', R.SPEC['search']['simulations']),
+              'maxConsidered': run_cfg.get('max_considered', R.SPEC['search']['maxConsidered']),
+              'maxDepth': run_cfg.get('max_depth', R.SPEC['search']['maxDepth']),
+              'valueScale': run_cfg.get('value_scale', R.SPEC['search']['valueScale'])}
     meta = {'label': label, 'channels': c, 'blocks': b, 'policy_head': head, 'params': n_params,
-            'mflops_per_eval': flops / 1e6,
+            'search': search, 'mflops_per_eval': flops / 1e6,
             'variants': variants,
             'check': {'planes': planes.reshape(-1).tolist(), 'features': feats.reshape(-1).tolist(),
                       'n': int(len(planes)), 'value': want_value.tolist(),

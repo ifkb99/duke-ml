@@ -37,9 +37,10 @@ import numpy as np
 
 from training.zero import rules as R
 
-MAX_PLY = 200          # turns before the game is declared a draw
-DRAWING = -2           # `pending` value for a draw afterstate
-NONE = -1              # `pending` value when no tile is in hand
+MAX_PLY = R.SPEC['env']['maxPly']             # turns before the game is declared a draw
+DRAWING = R.SPEC['env']['pendingDrawing']      # `pending` value for a draw afterstate
+NONE = R.SPEC['env']['pendingNone']            # `pending` value when no tile is in hand
+BAG_SCALE = float(R.SPEC['env']['bagFeatureScale'])
 MAX_CANDIDATES = 128   # pseudo-legal moves checked for Duke safety per state
 
 # Tables as device constants.
@@ -492,7 +493,7 @@ def observe_arrays(tile, owner, side, bags, pending, ply):
     planes = jax.nn.one_hot(idx, N_PLANES) * (tile >= 0)[:, None]
     planes = planes.reshape(R.BOARD, R.BOARD, N_PLANES)
     features = jnp.concatenate([
-        bags.reshape(-1).astype(jnp.float32) / 3.0,
+        bags.reshape(-1).astype(jnp.float32) / BAG_SCALE,
         jax.nn.one_hot(pending, R.N_TYPES),          # all-zero when pending < 0
         (pending == DRAWING)[None].astype(jnp.float32),
         (ply / MAX_PLY)[None].astype(jnp.float32),
