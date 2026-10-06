@@ -1,0 +1,164 @@
+"""
+Distill a trained network (the teacher) into a new one (the student), e.g. to
+swap in the small spatial policy head or shrink the network for the browser.
+
+    python -m training.zero.distill runs/az3-net/latest.pkl --run az3-spatial \\
+        --policy-head spatial --init teacher
+
+1. The teacher plays itself with the same search as training (32 simulations);
+   the samples (search policy + n-step value targets) are cached in
+   runs/<run>/distill_samples.npz, so other students can reuse them.
+2. The student learns them with early stopping on held-out games
+   (train.imitate, policy and value).
+3. The teacher's own losses on the same held-out games are the bar to reach.
+4. The student is saved as runs/<run>/imitation.pkl: `run.sh <run> ...` then
+   continues it with self-play RL, skipping the minimax warm-start.
+
+--init teacher copies every trunk and value-head weight from the teacher and
+starts only the policy head fresh, so a dense student is the fair control for
+a spatial one: same data, same steps, only the head differs.
+"""
+
+import argparse
+import json
+import time
+from dataclasses import asdict, replace
+from pathlib import Path
+
+import jax
+import numpy as np
+import optax
+from flax import nnx
+
+from training.zero import env as E
+from training.zero import replay as RP
+from training.zero import search as S
+from training.zero import selfplay as SP
+from training.zero import train as T
+from training.zero.network import DukeZeroNet, make_forward
+
+
+def teacher_games(forward, params, cfg, n_samples, games, key, log):
+    """Self-play samples from the teacher, in whole games."""
+    selfplay = SP.make_selfplay(S.make_search(forward, cfg.simulations, cfg.max_considered, cfg.max_depth),
+                                cfg.unroll)
+    key, k = jax.random.split(key)
+    states = jax.jit(jax.vmap(E.init))(jax.random.split(k, games))
+    asm, parts, n, t0 = RP.Assembler(games, nstep=cfg.value_nstep), [], 0, time.time()
+    while n < n_samples:
+        key, k = jax.random.split(key)
+        states, rec = selfplay(params, states, k)
+        out = asm.add(jax.device_get(rec))
+        if out is not None:
+            parts.append(out)
+            n += len(out['z'])
+        log(f'teacher self-play: {n} samples ({n / (time.time() - t0):.0f}/s)')
+    return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
+
+
+def copy_from_teacher(student, teacher):
+    """Student params with every non-policy weight taken from the teacher."""
+    s, t = nnx.to_pure_dict(student), nnx.to_pure_dict(teacher)
+    for name in s:
+        if not name.startswith('policy_'):
+            assert jax.tree.structure(s[name]) == jax.tree.structure(t[name]), name
+            s[name] = t[name]
+    return s
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('teacher', type=Path)
+    p.add_argument('--run', required=True, help='student run directory under runs/')
+    p.add_argument('--channels', type=int, help='default: the teacher\'s')
+    p.add_argument('--blocks', type=int, help='default: the teacher\'s')
+    p.add_argument('--policy-head', default='spatial')
+    p.add_argument('--init', choices=['teacher', 'fresh'], default='teacher')
+    p.add_argument('--samples', type=int, default=400_000, help='teacher self-play samples to generate')
+    p.add_argument('--games', type=int, default=512, help='parallel self-play games')
+    p.add_argument('--data', type=Path, help='reuse samples from another run\'s distill_samples.npz')
+    p.add_argument('--steps', type=int, default=20_000, help='maximum SGD steps (stops early)')
+    p.add_argument('--lr', type=float, default=3e-4)
+    p.add_argument('--seed', type=int, default=0)
+    a = p.parse_args()
+
+    run_dir = T.RUNS / a.run
+    run_dir.mkdir(parents=True, exist_ok=True)
+    metrics = (run_dir / 'metrics.jsonl').open('a')
+
+    def log(msg, **record):
+        print(f'[{time.strftime("%H:%M:%S")}] {msg}', flush=True)
+        if record:
+            metrics.write(json.dumps({'time': time.time(), **record}) + '\n')
+            metrics.flush()
+
+    t_graphdef, t_params, t_ckpt = T.load_params(a.teacher)
+    t_forward = make_forward(t_graphdef)
+    t_cfg = T.Config(**{k: v for k, v in t_ckpt['config'].items() if k in T.Config.__dataclass_fields__})
+    cfg = replace(t_cfg, run=a.run, seed=a.seed, lr=a.lr,
+                  channels=a.channels or t_cfg.channels, blocks=a.blocks or t_cfg.blocks,
+                  policy_head=a.policy_head, imitation_steps=a.steps, imitation_value_weight=1.0,
+                  imitation_check_every=min(256, a.steps), imitation_patience=4)
+    log(f'start (commit {T.git_commit()})', kind='start', commit=T.git_commit(), distill=True,
+        teacher=str(a.teacher), teacher_iteration=t_ckpt['iteration'], init=a.init,
+        gpus=len(jax.devices()), config=asdict(cfg))
+    (run_dir / 'config.json').write_text(json.dumps(asdict(cfg), indent=2))
+
+    key = jax.random.key(a.seed)
+    data = a.data or run_dir / 'distill_samples.npz'
+    if data.exists():
+        samples = dict(np.load(data))
+        log(f'samples: {len(samples["z"])} from {data}')
+    else:
+        key, k = jax.random.split(key)
+        samples = teacher_games(t_forward, t_params, t_cfg, a.samples, a.games, k, log)
+        np.savez(data, **samples)
+        log(f'samples: {len(samples["z"])} saved to {data}', kind='distill_data',
+            samples=len(samples['z']), games=int(T.game_ids(samples).max() + 1))
+
+    student = DukeZeroNet(cfg.channels, cfg.blocks, cfg.policy_head, rngs=nnx.Rngs(a.seed))
+    graphdef, params = nnx.split(student)
+    if a.init == 'teacher':
+        assert (cfg.channels, cfg.blocks) == (t_cfg.channels, t_cfg.blocks), '--init teacher needs the same trunk'
+        nnx.replace_by_pure_dict(params, copy_from_teacher(params, t_params))
+    forward = make_forward(graphdef)
+    tx = optax.chain(optax.clip_by_global_norm(1.0), optax.adamw(cfg.lr, weight_decay=cfg.weight_decay))
+    opt_state = tx.init(params)
+    n_params = sum(np.size(x) for x in jax.tree.leaves(params))
+    log(f'student {cfg.channels}x{cfg.blocks} {cfg.policy_head}: {n_params / 1e6:.2f}M parameters, init {a.init}')
+
+    # The bar: the teacher on the held-out games (the split imitate uses).
+    gid = T.game_ids(samples)
+    held = gid >= int(round((gid.max() + 1) * (1 - cfg.imitation_holdout)))
+    test = {k: v[held] for k, v in samples.items()}
+    t_eval = jax.jit(lambda prm, b: T.make_loss_fn(t_forward)(prm, b)[1])
+    t_diag = T.make_diagnostics(t_forward)
+
+    def held_out(eval_fn, prm):
+        ms = [jax.device_get(eval_fn(prm, {k: v[i:i + 4096] for k, v in test.items()}))
+              for i in range(0, len(test['z']), 4096)]
+        return {k: float(np.mean([m[k] for m in ms])) for k in ms[0]}
+
+    tm = held_out(t_eval, t_params)
+    log(f'teacher on held-out games: policy {tm["policy_loss"]:.3f} (top-1 {tm["policy_top1"]:.3f}) '
+        f'value {tm["value_loss"]:.3f}', kind='distill_teacher', **{f'heldout_{k}': v for k, v in tm.items()})
+
+    learner = jax.devices()[0]
+    params, opt_state = T.imitate(cfg, samples, jax.device_put(params, learner), opt_state,
+                                  T.make_train_steps(forward, tx), jax.jit(lambda prm, b: T.make_loss_fn(forward)(prm, b)[1]),
+                                  learner, np.random.default_rng(a.seed), log)
+
+    sm = held_out(jax.jit(lambda prm, b: T.make_loss_fn(forward)(prm, b)[1]), params)
+    sd = held_out(T.make_diagnostics(forward), params)
+    td = held_out(t_diag, t_params)
+    log(f'student on held-out games: policy {sm["policy_loss"]:.3f} (top-1 {sm["policy_top1"]:.3f}) '
+        f'value {sm["value_loss"]:.3f} | teacher {tm["policy_loss"]:.3f} ({tm["policy_top1"]:.3f}) '
+        f'{tm["value_loss"]:.3f}', kind='distill_result',
+        **{f'student_{k}': v for k, v in {**sm, **sd}.items()},
+        **{f'teacher_{k}': v for k, v in {**tm, **td}.items()})
+    T.save_checkpoint(run_dir / 'imitation.pkl', params, opt_state, 0, cfg)
+    log(f'saved {run_dir / "imitation.pkl"}')
+
+
+if __name__ == '__main__':
+    main()
