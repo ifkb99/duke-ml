@@ -81,11 +81,19 @@ class Config:
                                    # balanced so both GPUs finish together (sp_gpu*_s)
     unroll: int = 32               # moves per game per iteration
     simulations: int = 32
+    full_simulations: int = 0      # playout cap randomization (KataGo): a `full_fraction`
+    full_fraction: float = 0.25    # of self-play calls search this deep and give the
+    full_chunks: int = 4           # policy targets; the rest only move games along and
+                                   # give value targets (0 = off). Deep searches run in
+                                   # `full_chunks` pieces to fit their trees in memory.
     max_considered: int = 16
     max_depth: int = 16            # tree edges per simulation (2 per move: decision + chance)
     # learning
     batch: int = 1024
     lr: float = 3e-4
+    lr_decay_start: int = 0        # cosine decay from `lr` to `lr_min`, starting at this
+    lr_decay_iterations: int = 0   # iteration and lasting this many (0 = constant lr)
+    lr_min: float = 3e-5
     weight_decay: float = 1e-4
     sample_reuse: float = 1.0      # each new sample is trained on ~this many times
                                    # (az1 used 4 and the value head memorized the buffer)
@@ -114,6 +122,7 @@ class Config:
     ladder_every: int = 100        # play the network from this many iterations ago (0 = off)
     ladder_games: int = 64
     diag_samples: int = 4096       # new samples per iteration used for fresh_* metrics
+    tactics_every: int = 50        # tactics benchmark (tactics.py) every this many iterations
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +261,42 @@ class MetricAverager:
         out = {k: float(v) / self.counts[k] for k, v in self.sums.items()}
         self.sums, self.counts = {}, {}
         return out
+
+
+def fmt(v: float) -> str:
+    """Log formatting: 3 decimals, or scientific for small values like the learning rate."""
+    return f'{v:.2e}' if v != 0 and abs(v) < 0.01 else f'{v:.3f}'
+
+
+def make_optimizer(cfg):
+    """AdamW with gradient clipping; the learning rate is a state entry
+    (inject_hyperparams) so the schedule can set it each iteration."""
+    return optax.chain(optax.clip_by_global_norm(1.0),
+                       optax.inject_hyperparams(optax.adamw)(learning_rate=cfg.lr,
+                                                             weight_decay=cfg.weight_decay))
+
+
+def learning_rate(cfg, iteration: int) -> float:
+    if cfg.lr_decay_iterations <= 0 or iteration < cfg.lr_decay_start:
+        return cfg.lr
+    t = min(1.0, (iteration - cfg.lr_decay_start) / cfg.lr_decay_iterations)
+    return cfg.lr_min + (cfg.lr - cfg.lr_min) * 0.5 * (1 + np.cos(np.pi * t))
+
+
+def with_learning_rate(opt_state, lr: float):
+    clip, adam = opt_state
+    return clip, adam._replace(hyperparams={**adam.hyperparams, 'learning_rate': jnp.asarray(lr, jnp.float32)})
+
+
+def upgrade_opt_state(opt_state, tx, params):
+    """Checkpoints from before the schedule hold a plain AdamW state: wrap it
+    (moments and step count kept) in the inject_hyperparams state."""
+    fresh = tx.init(params)
+    if jax.tree.structure(opt_state) == jax.tree.structure(fresh):
+        return opt_state
+    clip, adam = opt_state
+    assert jax.tree.structure(adam) == jax.tree.structure(fresh[1].inner_state), 'unknown optimizer state'
+    return clip, fresh[1]._replace(count=adam[0].count, inner_state=adam)
 
 
 # ---------------------------------------------------------------------------
@@ -421,8 +466,7 @@ def main(cfg: Config):
     model = DukeZeroNet(cfg.channels, cfg.blocks, cfg.policy_head, rngs=nnx.Rngs(cfg.seed))
     graphdef, params = nnx.split(model)
     forward = make_forward(graphdef)
-    tx = optax.chain(optax.clip_by_global_norm(1.0),
-                     optax.adamw(cfg.lr, weight_decay=cfg.weight_decay))
+    tx = make_optimizer(cfg)
     opt_state = tx.init(params)
     start_iteration = 0
 
@@ -433,7 +477,7 @@ def main(cfg: Config):
         # The checkpoint defines the network shape, whatever the flags say.
         graphdef, params, ckpt = load_params(resume_from)
         forward = make_forward(graphdef)
-        opt_state = ckpt['opt_state']
+        opt_state = upgrade_opt_state(ckpt['opt_state'], tx, params)
         start_iteration = ckpt['iteration']
         shape = (ckpt['config']['channels'], ckpt['config']['blocks'], ckpt['config'].get('policy_head', 'dense'))
         if shape != (cfg.channels, cfg.blocks, cfg.policy_head):
@@ -455,6 +499,13 @@ def main(cfg: Config):
     make = lambda: S.make_search(forward, cfg.simulations, cfg.max_considered, cfg.max_depth)
     search = jax.jit(make())
     selfplay = SP.make_selfplay(make(), cfg.unroll)
+    if cfg.full_simulations:
+        fast_selfplay = SP.make_selfplay(make(), cfg.unroll, policy_targets=False)
+        full_selfplay = SP.make_selfplay(S.chunked(
+            S.make_search(forward, cfg.full_simulations, cfg.max_considered, cfg.max_depth),
+            cfg.full_chunks), cfg.unroll)
+    from training.zero import tactics as TA
+    tactics = TA.load() if cfg.tactics_every and TA.TACTICS.exists() else None
     np_rng = np.random.default_rng(cfg.seed + start_iteration)
     key = jax.random.key(cfg.seed + start_iteration)
 
@@ -523,19 +574,26 @@ def main(cfg: Config):
         # one thread each lets them run concurrently (13.6 s).
         sp_threads = ThreadPoolExecutor(len(actors), thread_name_prefix='selfplay')
 
-        def run_selfplay(i, k, t0):
-            new_states, rec = jax.block_until_ready(selfplay(sp_params[i], sp_states[i], k))
+        def run_selfplay(i, k, t0, full):
+            fn = selfplay if not cfg.full_simulations else full_selfplay if full else fast_selfplay
+            new_states, rec = jax.block_until_ready(fn(sp_params[i], sp_states[i], k))
             return new_states, rec, time.time() - t0
 
         previous = None
         for it in range(start_iteration + 1, cfg.iterations + 1):
             t_iter = time.time()
+            lr = learning_rate(cfg, it)
+            opt_state = with_learning_rate(opt_state, lr)
+            avg.add({'lr': lr})
             # Everything below up to collecting the futures overlaps with the GPUs:
             # 1. self-play on every GPU, each from its own thread,
             futures = []
             for i in range(len(actors)):
                 key, k = jax.random.split(key)
-                futures.append(sp_threads.submit(run_selfplay, i, k, t_iter))
+                full = bool(cfg.full_simulations) and np_rng.random() < cfg.full_fraction
+                if cfg.full_simulations:
+                    avg.add({'sp_full': float(full)})
+                futures.append(sp_threads.submit(run_selfplay, i, k, t_iter, full))
             # 2. queue SGD on the learner GPU, a chunk of steps per call,
             if replay.size >= cfg.min_replay:
                 for _ in range(calls):
@@ -563,7 +621,7 @@ def main(cfg: Config):
                 t_last = time.time()
                 m = avg.pop()
                 log(f'iter {it}: {games_done} games, replay {replay.size}, '
-                    f'{5 * new_per_iter / dt:,.0f} moves/s | ' + ' '.join(f'{k}={v:.3f}' for k, v in m.items()),
+                    f'{5 * new_per_iter / dt:,.0f} moves/s | ' + ' '.join(f'{k}={fmt(v)}' for k, v in m.items()),
                     kind='train', iteration=it, games=games_done, replay=replay.size,
                     moves_per_s=5 * new_per_iter / dt, **m)
 
@@ -587,6 +645,14 @@ def main(cfg: Config):
                     results.append(res)
                 log(f'eval {it}: ' + ', '.join(f"{r['b']} {r['score']:.2f}" for r in results),
                     kind='eval', iteration=it, results=results)
+                t_last = time.time()
+
+            if tactics is not None and it % cfg.tactics_every == 0:
+                # Forced wins kept / forced losses avoided (tactics.py).
+                tm = TA.score_network(forward, params, tactics, simulations=(cfg.simulations,),
+                                     searches={cfg.simulations: search})
+                log(f'tactics {it}: ' + ' '.join(f'{k}={v:.3f}' for k, v in tm.items()),
+                    kind='tactics', iteration=it, **tm)
                 t_last = time.time()
 
             if cfg.ladder_every and it % cfg.ladder_every == 0:

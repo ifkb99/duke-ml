@@ -271,3 +271,62 @@ def test_imitation_early_stopping(samples):
     assert checks and all('heldout_value_loss' in r for r in checks)
     # Kept parameters are those of the best held-out check.
     assert jax.tree.structure(p) == jax.tree.structure(params)
+
+
+# ---------------------------------------------------------------------------
+# Learning-rate schedule and playout cap randomization
+# ---------------------------------------------------------------------------
+
+def test_learning_rate_schedule():
+    cfg = T.Config(lr=1e-3, lr_min=1e-4, lr_decay_start=100, lr_decay_iterations=200)
+    assert T.learning_rate(cfg, 50) == 1e-3
+    assert T.learning_rate(cfg, 100) == pytest.approx(1e-3)
+    assert T.learning_rate(cfg, 200) == pytest.approx(5.5e-4)      # halfway down the cosine
+    assert T.learning_rate(cfg, 300) == pytest.approx(1e-4)
+    assert T.learning_rate(cfg, 10_000) == pytest.approx(1e-4)
+    assert T.learning_rate(T.Config(lr=2e-4), 10_000) == 2e-4        # no decay configured
+
+
+def test_scheduled_lr_is_used_and_old_states_upgrade(samples):
+    graphdef, params, old_tx = _tiny()
+    forward = make_forward(graphdef)
+    b = {k: v[:64] for k, v in samples.items()}
+    # An optimizer state saved before the schedule existed (plain AdamW)...
+    old_state = old_tx.init(params)
+    for _ in range(2):
+        params, old_state, _ = T.make_train_step(forward, old_tx)(params, old_state, b)
+    cfg = T.Config(lr=1e-3, weight_decay=1e-4)
+    tx = T.make_optimizer(cfg)
+    state = T.upgrade_opt_state(jax.device_get(old_state), tx, params)
+    assert jax.tree.structure(state) == jax.tree.structure(tx.init(params))
+    # ...keeps its moments and step count, so the next step matches the old optimizer's.
+    step = T.make_train_step(forward, tx)
+    want, _, _ = T.make_train_step(forward, old_tx)(params, old_state, b)
+    got, state, _ = step(params, T.with_learning_rate(state, 1e-3), b)
+    for x, y in zip(jax.tree.leaves(want), jax.tree.leaves(got)):
+        np.testing.assert_allclose(np.asarray(x), np.asarray(y), rtol=1e-5, atol=1e-7)
+    # A zero learning rate (weight decay is scaled by it too) leaves params unchanged.
+    frozen, _, _ = step(got, T.with_learning_rate(state, 0.0), b)
+    for x, y in zip(jax.tree.leaves(got), jax.tree.leaves(frozen)):
+        np.testing.assert_array_equal(np.asarray(x), np.asarray(y))
+
+
+def test_chunked_search_matches_whole_batch(random_states):
+    from training.zero.tests.conftest import stack
+    graphdef, params, _ = _tiny()
+    search = S.make_search(make_forward(graphdef), 8, 4, 8)
+    states = stack(random_states[:8])
+    whole = jax.jit(search)(params, jax.random.key(0), states, 0.0)
+    parts = jax.jit(S.chunked(search, 4))(params, jax.random.key(0), states, 0.0)
+    np.testing.assert_array_equal(np.asarray(whole.action), np.asarray(parts.action))
+    np.testing.assert_allclose(np.asarray(whole.action_weights), np.asarray(parts.action_weights), atol=1e-6)
+
+
+def test_fast_selfplay_gives_no_policy_targets():
+    graphdef, params, _ = _tiny()
+    search = S.make_search(make_forward(graphdef), 4, 4)
+    states = jax.vmap(E.init)(jax.random.split(jax.random.key(0), 4))
+    _, rec = SP.make_selfplay(search, 3, policy_targets=False)(params, states, jax.random.key(1))
+    assert not np.asarray(rec['has_policy']).any()
+    _, rec = SP.make_selfplay(search, 3)(params, states, jax.random.key(1))
+    assert np.asarray(rec['has_policy']).all()

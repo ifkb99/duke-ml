@@ -27,7 +27,6 @@ from pathlib import Path
 
 import jax
 import numpy as np
-import optax
 from flax import nnx
 
 from training.zero import env as E
@@ -122,7 +121,7 @@ def main():
         assert (cfg.channels, cfg.blocks) == (t_cfg.channels, t_cfg.blocks), '--init teacher needs the same trunk'
         nnx.replace_by_pure_dict(params, copy_from_teacher(params, t_params))
     forward = make_forward(graphdef)
-    tx = optax.chain(optax.clip_by_global_norm(1.0), optax.adamw(cfg.lr, weight_decay=cfg.weight_decay))
+    tx = T.make_optimizer(cfg)
     opt_state = tx.init(params)
     n_params = sum(np.size(x) for x in jax.tree.leaves(params))
     log(f'student {cfg.channels}x{cfg.blocks} {cfg.policy_head}: {n_params / 1e6:.2f}M parameters, init {a.init}')

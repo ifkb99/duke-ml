@@ -61,8 +61,12 @@ def _reset_done(s: E.State, key) -> E.State:
     return jax.tree.map(pick, s, fresh)
 
 
-def make_selfplay(search, unroll: int):
-    """Returns jitted selfplay(params, states, key) -> (states, records[T, B])."""
+def make_selfplay(search, unroll: int, policy_targets: bool = True):
+    """Returns jitted selfplay(params, states, key) -> (states, records[T, B]).
+
+    policy_targets=False marks every record has_policy=False: a cheap search
+    that only moves the game along and gives value targets (playout cap
+    randomization, see train.Config.full_simulations)."""
     step_decision = jax.vmap(E.step_decision)
     step_chance = jax.vmap(E.step_chance)
     chance_probs = jax.vmap(E.chance_probs)
@@ -76,7 +80,7 @@ def make_selfplay(search, unroll: int):
         record = {
             **compact_state(s),
             **compact_policy(out.action_weights),
-            'has_policy': jnp.ones_like(s.done),
+            'has_policy': jnp.full_like(s.done, policy_targets),
             **step_record(s, after, out.action),
             'search_value': out.search_value,
         }

@@ -319,3 +319,24 @@ def make_search(forward, num_simulations: int, max_considered: int = 16, max_dep
                             root_value=value, search_value=summary.value)
 
     return search
+
+
+def chunked(search, chunks: int):
+    """The same search over the batch in `chunks` sequential pieces.
+
+    A search's tree holds (simulations + 1) nodes x 3,620 children per game,
+    so deep searches over many games need the batch split to fit in memory.
+    The batch must divide evenly into `chunks`.
+    """
+    if chunks <= 1:
+        return search
+
+    def run(params, rng, states, gumbel_scale=1.0):
+        b = states.tile.shape[0]
+        split = jax.tree.map(lambda x: x.reshape((chunks, b // chunks) + x.shape[1:]), states)
+        keys = jax.random.split(rng, chunks)
+        out = jax.lax.map(lambda a: search(params, a[0], a[1], gumbel_scale), (keys, split))
+        return jax.tree.map(lambda x: x.reshape((b,) + x.shape[2:]), out)
+
+    return run
+
