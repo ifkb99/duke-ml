@@ -18,7 +18,35 @@ Almost all of the AI code is handmade since that is what I want to focus on lear
 
 Have fun with the repo!
 
-## Training a Neural Network
+## Self-play training (AlphaZero-style, JAX)
+
+`training/zero/` is a complete AlphaZero-style pipeline that runs on the GPU:
+
+- **`env.py`**: the game ported to JAX (pure functions, thousands of games in
+  parallel via `vmap`). It's checked move-for-move against the TypeScript engine
+  by differential tests.
+- **`search.py`**: tree search (Gumbel MuZero selection + Stochastic MuZero
+  chance nodes, so tile draws are treated as luck, not choices).
+- **`train.py`**: imitation warm-start from minimax, then self-play. One GPU
+  plays, the other trains (and also plays in its spare time). It evaluates
+  against random and minimax every few minutes.
+
+```bash
+uv sync && npm install && npm run build --workspace=packages/engine
+uv run pytest training/zero/tests -q          # engine parity + unit tests
+
+training/zero/run.sh az1                      # start (detached, auto-resumes after crashes)
+tail -f runs/az1/train.log                    # watch
+kill -- -$(cat runs/az1/pid)                  # stop
+```
+
+Runs live in `runs/<name>/`: `train.log`, `metrics.jsonl` (one JSON line per
+log/eval), `latest.pkl` (resume point), and periodic `ckpt_*.pkl`.
+
+**Learning how it works:** `lessons/` walks through the code in six short
+lessons with exercises and tests. See `lessons/README.md`.
+
+## Training a Neural Network (supervised baseline, older)
 
 ### Prerequisites
 

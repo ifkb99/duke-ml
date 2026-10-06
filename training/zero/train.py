@@ -5,7 +5,8 @@ AlphaZero-style training for The Duke: imitation warm-start, then self-play.
 
 Loop (one "iteration"):
   1. ACTOR (last GPU): play `unroll` moves in each of `games` parallel games,
-     every move chosen by tree search with the current network.
+     every move chosen by tree search with the current network. The learner
+     GPU also plays `learner_games` games, since SGD alone leaves it mostly idle.
   2. LEARNER (first GPU), at the same time: `train_steps` minibatches of SGD
      on the replay buffer:
        policy loss = cross-entropy(network policy, search's improved policy)
@@ -55,7 +56,9 @@ class Config:
     channels: int = 96
     blocks: int = 6
     # self-play
-    games: int = 1024              # parallel self-play games
+    games: int = 1024              # parallel self-play games on the actor GPU
+    learner_games: int = 512       # more self-play games on the learner GPU, which
+                                   # would otherwise idle between SGD steps (0 = off)
     unroll: int = 32               # moves per game per iteration
     simulations: int = 32
     max_considered: int = 16
@@ -173,9 +176,16 @@ def load_params(path: Path):
 # Phases
 # ---------------------------------------------------------------------------
 
-def imitation_data(cfg, pool, key, log):
-    """Minimax-vs-minimax games -> replay samples with one-hot policy targets."""
+def imitation_data(cfg, pool, key, log, cache: Path):
+    """Minimax-vs-minimax games -> replay samples with one-hot policy targets.
+
+    Saved to `cache` so a restart doesn't replay all the minimax games."""
     replay = RP.Replay(cfg.replay)
+    if cache.exists():
+        with np.load(cache) as f:
+            replay.add({k: f[k] for k in f.files})
+        log(f'imitation: loaded {replay.size} samples from {cache}')
+        return replay
     rng = np.random.default_rng(cfg.seed)
     per_round = 256
     played = 0
@@ -193,6 +203,8 @@ def imitation_data(cfg, pool, key, log):
         played += n
         log(f'imitation: {played}/{cfg.imitation_games} games, {replay.size} samples '
             f'({time.time() - t:.0f}s)')
+    np.savez(cache.with_suffix('.tmp.npz'), **{k: v[:replay.size] for k, v in replay.data.items()})
+    cache.with_suffix('.tmp.npz').replace(cache)
     return replay
 
 
@@ -213,6 +225,13 @@ def evaluate(cfg, search, params, pool, key):
 # ---------------------------------------------------------------------------
 
 def main(cfg: Config):
+    # Reuse compiled XLA programs across runs and restarts: compiling is slow,
+    # and (with jax 0.9.1's CUDA 13 plugin) occasionally crashes, so the less
+    # of it a restart does the better.
+    jax.config.update('jax_compilation_cache_dir', str(RUNS / '.jax_cache'))
+    jax.config.update('jax_persistent_cache_min_compile_time_secs', 0)
+    jax.config.update('jax_persistent_cache_min_entry_size_bytes', 0)
+
     run_dir = RUNS / cfg.run
     run_dir.mkdir(parents=True, exist_ok=True)
     metrics_file = (run_dir / 'metrics.jsonl').open('a')
@@ -262,7 +281,7 @@ def main(cfg: Config):
         # --- imitation warm-start (fresh runs only) ---
         if resume_from is None and cfg.imitation_games > 0:
             key, k = jax.random.split(key)
-            replay = imitation_data(cfg, pool, k, log)
+            replay = imitation_data(cfg, pool, k, log, run_dir / 'imitation_data.npz')
             for step in range(1, cfg.imitation_steps + 1):
                 batch = jax.device_put(replay.sample(cfg.batch, np_rng), learner)
                 params, opt_state, m = train_step(params, opt_state, batch)
@@ -278,17 +297,29 @@ def main(cfg: Config):
             replay = RP.Replay(cfg.replay)
 
         # --- self-play ---
-        key, k = jax.random.split(key)
-        states = jax.device_put(jax.jit(jax.vmap(E.init))(jax.random.split(k, cfg.games)), actor)
-        actor_params = jax.device_put(params, actor)
-        assembler = RP.Assembler(cfg.games)
-        new_per_iter = cfg.games * cfg.unroll
+        # One self-play stream per GPU. Each call is dispatched asynchronously,
+        # so the streams (and the learner's SGD, queued behind its own stream
+        # on the learner GPU) all run at the same time.
+        actors = [(actor, cfg.games)]
+        if actor != learner and cfg.learner_games > 0:
+            actors.append((learner, cfg.learner_games))
+        sp_states, sp_params = [], []
+        for dev, n in actors:
+            key, k = jax.random.split(key)
+            sp_states.append(jax.device_put(jax.jit(jax.vmap(E.init))(jax.random.split(k, n)), dev))
+            sp_params.append(jax.device_put(params, dev))
+        total_games = sum(n for _, n in actors)
+        assembler = RP.Assembler(total_games)
+        new_per_iter = total_games * cfg.unroll
         train_steps = max(1, round(cfg.sample_reuse * new_per_iter / cfg.batch))
         games_done, t_last = 0, time.time()
 
         for it in range(start_iteration + 1, cfg.iterations + 1):
-            key, k = jax.random.split(key)
-            states, records = selfplay(actor_params, states, k)        # async on actor GPU
+            pending = []
+            for i in range(len(actors)):                               # async, one per GPU
+                key, k = jax.random.split(key)
+                sp_states[i], rec = selfplay(sp_params[i], sp_states[i], k)
+                pending.append(rec)
 
             if replay.size >= cfg.min_replay:                          # overlaps with self-play
                 for _ in range(train_steps):
@@ -296,12 +327,13 @@ def main(cfg: Config):
                     params, opt_state, m = train_step(params, opt_state, batch)
                     avg.add(m)
 
-            records = jax.device_get(records)                          # waits for self-play
+            parts = jax.device_get(pending)                            # waits for self-play
+            records = {k: np.concatenate([p[k] for p in parts], axis=1) for k in parts[0]}
             search_value = records.pop('search_value')
             samples = assembler.add(records)
             if samples is not None:
                 replay.add(samples)
-            actor_params = jax.device_put(params, actor)
+            sp_params = [jax.device_put(params, dev) for dev, _ in actors]
 
             # Self-play statistics for this iteration.
             done = records['done'] & records['valid']
