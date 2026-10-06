@@ -107,6 +107,8 @@ class Config:
     eval_every: int = 25
     eval_games: int = 64
     eval_depths: list = field(default_factory=lambda: [2, 4])
+    slow_eval_depths: list = field(default_factory=lambda: [6])  # deeper minimax, evaluated
+    slow_eval_every: int = 100     # less often since it's slow (~2 min per 64 games at depth 6)
     workers: int = 0               # minimax processes (0 = one per CPU thread)
     ladder_every: int = 100        # play the network from this many iterations ago (0 = off)
     ladder_games: int = 64
@@ -572,6 +574,18 @@ def main(cfg: Config):
                     kind='eval', iteration=it, results=results)
                 if it % (cfg.eval_every * 8) == 0:
                     save_checkpoint(run_dir / f'ckpt_{it:06d}.pkl', params, opt_state, it, cfg)
+                t_last = time.time()
+
+            if cfg.slow_eval_every and it % cfg.slow_eval_every == 0 and cfg.slow_eval_depths:
+                net = AR.Agent('net', params=params, search=search)
+                results = []
+                for d in cfg.slow_eval_depths:
+                    key, k = jax.random.split(key)
+                    res, _ = AR.play(net, AR.Agent('minimax', name=f'minimax{d}', depth=d),
+                                     cfg.eval_games, k, pool=pool)
+                    results.append(res)
+                log(f'eval {it}: ' + ', '.join(f"{r['b']} {r['score']:.2f}" for r in results),
+                    kind='eval', iteration=it, results=results)
                 t_last = time.time()
 
             if cfg.ladder_every and it % cfg.ladder_every == 0:

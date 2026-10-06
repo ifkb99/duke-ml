@@ -134,7 +134,8 @@ The ones you're most likely to want:
 | `--sample-reuse` | 1 | how many times each new position is trained on on average |
 | `--value-nstep` | 10 | value target looks this many steps ahead then uses the search's estimate (0 = final result) |
 | `--eval-every` | 25 | iterations between evaluations and checkpoints |
-| `--eval-depths` | 2 4 | minimax depths to evaluate against (add 6 once 4 is easy) |
+| `--eval-depths` | 2 4 | minimax depths to evaluate against every `--eval-every` iterations |
+| `--slow-eval-depths`, `--slow-eval-every` | 6, 100 | deeper (slower) minimax, evaluated less often; shows up as a second `eval` line |
 | `--imitation-games` | 3000 | warm-start games (0 = pure self-play from scratch); training on them stops early when held-out loss stops improving |
 | `--ladder-every` | 100 | iterations between ladder matches against the earlier network (0 = off) |
 | `--lr` | 3e-4 | learning rate |
