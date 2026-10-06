@@ -10,6 +10,11 @@
  *
  *   in:  {"id": any, "reset": true}   → clears the transposition table
  *
+ *   in:  {"id": any, "state": ..., "depth": number, "scoreMoves": true}
+ *   out: {"id": any, "moves": [{"move": GameMove, "score": number}], "draw": number | null}
+ *        every legal move's exact score, from the point of view of the player
+ *        to move (benchmarking); "draw" is the expected score of drawing.
+ *
  * Prints "READY" once on startup.
  *
  * Usage:
@@ -18,13 +23,14 @@
 
 import {createInterface} from 'node:readline';
 import {deserialize, type SerializedGameState} from '@the-duke/engine';
-import {findBestMove, ttClear} from '../minimax.js';
+import {findBestMove, scoreRootMoves, ttClear} from '../minimax.js';
 
 interface Request {
   id: unknown;
   state?: SerializedGameState;
   depth?: number;
   reset?: boolean;
+  scoreMoves?: boolean;
 }
 
 const rl = createInterface({input: process.stdin});
@@ -38,6 +44,16 @@ rl.on('line', line => {
     return;
   }
   const state = deserialize(req.state!);
+  if (req.scoreMoves) {
+    const sign = state.currentPlayer === 'P1' ? 1 : -1;
+    const scored = scoreRootMoves(state, req.depth ?? 6);
+    process.stdout.write(JSON.stringify({
+      id: req.id,
+      moves: scored.moves.map(m => ({move: m.move, score: sign * m.score})),
+      draw: scored.draw === null ? null : sign * scored.draw,
+    }) + '\n');
+    return;
+  }
   const result = findBestMove(state, req.depth ?? 4);
   process.stdout.write(JSON.stringify({id: req.id, move: result.move, score: result.score}) + '\n');
 });

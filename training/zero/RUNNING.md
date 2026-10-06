@@ -89,6 +89,34 @@ uv run python -m training.zero.wandb_sync az2         # one-off upload of a fini
 Useful x-axes in the W&B charts: `iteration`, `games`, and `gpu_hours`, the
 fair axis for comparing runs on different numbers of GPUs.
 
+### Ratings, benchmark and calibration (the evaluator)
+
+A separate process rates every checkpoint (`imitation.pkl`, `ckpt_*.pkl`) of
+the runs you name on one common scale, always with the same search (32
+simulations), so runs with different settings are compared fairly:
+
+```bash
+training/zero/evaluate.sh az2 az3-net az3-sims --stride az1=1000
+tail -f runs/ratings/evaluator.log
+kill -- -$(cat runs/ratings/pid)
+```
+
+Per checkpoint it records, in `runs/ratings/results.jsonl` and the W&B run
+`evaluator`:
+
+| metric | meaning |
+|---|---|
+| `elo` ± `elo_se` | rating on one scale for all runs (minimax depth 2 = 0), fit from all rating games |
+| `bench_search_acc`, `bench_policy_acc` | share of benchmark positions where it picked a best move (minimax depth 6 judges) |
+| `bench_*_blunder` | share of positions where its move loses 3+ points (about a tile) |
+| `bench_*_puzzle_acc` | accuracy on positions with exactly one good move |
+| `bench_*_missed_win`, `bench_*_walked_into_loss` | forced wins it didn't take, forced losses it walked into |
+| `value_corr`, `value_corr_opening/middle/late/endgame` | how well its value head predicts game results, overall and by game phase |
+| `calibration_error` | how far its confidence is from reality (0 = when it says +0.6, that side wins 80% of the time) |
+
+The benchmark positions (`runs/benchmark/positions.npz`) are built once with
+`uv run python -m training.zero.benchmark build`.
+
 ## Stop
 
 ```bash

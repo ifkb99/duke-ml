@@ -30,12 +30,15 @@ class _Worker:
         if line != 'READY':
             raise RuntimeError(f'minimax server failed to start: {line!r}')
 
-    def ask(self, state: dict, depth: int) -> dict:
-        self.proc.stdin.write(json.dumps({'id': 0, 'state': state, 'depth': depth}) + '\n')
+    def request(self, req: dict) -> dict:
+        self.proc.stdin.write(json.dumps({'id': 0, **req}) + '\n')
         line = self.proc.stdout.readline()
         if not line:
             raise ConnectionError(f'minimax server exited (code {self.proc.wait()})')
-        return json.loads(line)['move']
+        return json.loads(line)
+
+    def ask(self, state: dict, depth: int) -> dict:
+        return self.request({'state': state, 'depth': depth})['move']
 
     def close(self):
         try:
@@ -56,9 +59,12 @@ class MinimaxPool:
         self._executor = ThreadPoolExecutor(n)
 
     def _ask(self, state, depth):
+        return self._call(lambda w: w.ask(state, depth))
+
+    def _call(self, fn):
         w = self._free.get()
         try:
-            return w.ask(state, depth)
+            return fn(w)
         except (ConnectionError, OSError, ValueError) as e:
             # A server died (or answered garbage): replace it and retry once,
             # so one bad process doesn't kill a long training run.
@@ -66,7 +72,7 @@ class MinimaxPool:
             w.close()
             w = _Worker()
             self._workers.append(w)
-            return w.ask(state, depth)
+            return fn(w)
         finally:
             self._free.put(w)
 
@@ -74,6 +80,12 @@ class MinimaxPool:
         """Best move for each TS state, computed in parallel. `depth` may be per-state."""
         depths = depth if isinstance(depth, list) else [depth] * len(states)
         return list(self._executor.map(self._ask, states, depths))
+
+    def score_moves(self, states: list[dict], depth: int) -> list[dict]:
+        """Every legal move's exact score for the player to move, per state:
+        {'moves': [{'move', 'score'}], 'draw': score | None}."""
+        req = lambda s: self._call(lambda w: w.request({'state': s, 'depth': depth, 'scoreMoves': True}))
+        return list(self._executor.map(req, states))
 
     def close(self):
         self._executor.shutdown()

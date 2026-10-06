@@ -21,6 +21,7 @@ GPUs used, the fair axis for comparing runs on different hardware).
 
 import argparse
 import json
+import math
 import time
 from pathlib import Path
 
@@ -46,6 +47,15 @@ class Clock:
         return {'hours': self.hours, 'gpu_hours': self.gpu_hours}
 
 
+def wilson(score, n, z=1.96):
+    """95% interval for a match score (wins + draws/2 over n games)."""
+    if not n:
+        return float('nan'), float('nan')
+    c = (score + z * z / (2 * n)) / (1 + z * z / n)
+    h = z * math.sqrt(score * (1 - score) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return max(0.0, c - h), min(1.0, c + h)
+
+
 def convert(rec, state):
     """One metrics.jsonl record -> dict to log, or None."""
     kind = rec.get('kind')
@@ -67,11 +77,16 @@ def convert(rec, state):
         return out
     if kind == 'eval':
         out.update({f"eval/{r['b']}": r['score'] for r in rec['results']})
+        for r in rec['results']:
+            lo, hi = wilson(r['score'], r.get('games', 0))
+            out[f"eval_ci/{r['b']}_low"], out[f"eval_ci/{r['b']}_high"] = lo, hi
         out.update({f"eval_plies/{r['b']}": r['mean_plies'] for r in rec['results'] if 'mean_plies' in r})
         out['iteration'], out['games'] = rec['iteration'], state['games']
         return out
     if kind == 'ladder':
         out['ladder/score_vs_earlier'] = rec['results']['score']
+        lo, hi = wilson(rec['results']['score'], rec['results'].get('games', 0))
+        out['ladder/score_low'], out['ladder/score_high'] = lo, hi
         out['ladder/iterations_apart'] = rec['iteration'] - rec['opponent']
         out['iteration'], out['games'] = rec['iteration'], state['games']
         return out
@@ -100,7 +115,7 @@ def sync(run: str, follow: bool, gpus: int, poll: float, run_id: str | None = No
                     config={**config, 'gpus': gpus, 'commit': commit}, dir=run_dir)
     wb.define_metric('iteration')
     wb.define_metric('imitation/step')
-    for prefix in ('eval/*', 'eval_plies/*', 'ladder/*', 'fresh_*', 'sp_*', 'events/*',
+    for prefix in ('eval/*', 'eval_ci/*', 'eval_plies/*', 'ladder/*', 'fresh_*', 'sp_*', 'events/*',
                    'policy_*', 'value_*', 'grad_norm', 'moves_per_s', 'replay', 'wait_s',
                    'games', 'hours', 'gpu_hours'):
         wb.define_metric(prefix, step_metric='iteration')
