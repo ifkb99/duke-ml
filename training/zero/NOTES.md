@@ -14,6 +14,18 @@ Started 21:41. Restarted twice from checkpoints for speed fixes; stopped at
 | iteration 25 | 0.95 | 0.56 | 0.12 |
 | iteration 50 | 0.97 | 0.48 | 0.03 |
 | iteration 75 | 0.92 | 0.53 | 0.06 |
+| iteration 100 (after BIOS restart) | 0.95 | 0.52 | 0.06 |
+| iteration 125 | 0.97 | 0.36 | 0.09 |
+| iteration 150 | 0.97 | 0.41 | 0.08 |
+
+**More search doesn't help (iteration 100, 128 games vs minimax 4):** 32
+simulations 0.09, 200 simulations 0.13, the same within noise. So the network's
+judgment is the bottleneck, not the search budget. Policy loss has been flat at
+~1.79 since the start of self-play while value loss falls (0.47 → 0.37).
+Next checks if it stays flat: (1) is the value head blind to 3-4-move tactics
+(compare it with minimax on positions where minimax wins material)? (2) are
+the Gumbel targets at 32 simulations / 16 candidates too close to the prior?
+(3) learning rate and replay staleness.
 
 Flat so far, but within noise (see "Evaluation noise" below), and only about
 45k self-play games in. **What to watch:** if minimax 4 hasn't moved by
