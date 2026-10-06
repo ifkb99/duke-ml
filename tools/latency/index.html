@@ -50,11 +50,12 @@
     <div class="controls">
       <button id="quick">Quick sweep</button>
       <button id="full" class="secondary">Full sweep</button>
+      <button id="gpu" class="secondary">GPU only</button>
       <label>Timed runs <input id="runs" type="number" value="20" min="3" max="200" style="width:4.5em"></label>
       <label>Threads <input id="threads" type="number" min="1" max="32" style="width:3.5em"></label>
       <button id="copy" class="secondary" disabled>Copy results</button>
     </div>
-    <p class="hint">Quick sweep: every network on the CPU (int8, batch 1 and 8) and on the GPU (fp16, batch 8) if WebGPU is available. Full sweep adds fp32/fp16 on the CPU and more batch sizes. Keep the screen on; it takes a few minutes.</p>
+    <p class="hint">Quick sweep: every network on the CPU (int8, batch 1 and 8) and on the GPU (fp16, batch 8) if WebGPU is available. Full sweep adds fp32/fp16 on the CPU and more batch sizes. GPU only runs just the WebGPU part. Keep the screen on; it takes a few minutes.</p>
   </section>
 
   <section>

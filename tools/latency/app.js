@@ -8,6 +8,7 @@ const PLANES = 6 * 6 * 60;
 const FEATURES = 47;
 const $ = id => document.getElementById(id);
 const results = [];
+const failures = [];
 
 function log(msg) {
   $('log').textContent += msg + '\n';
@@ -62,7 +63,8 @@ async function bench(meta, variant, backend, batches, runs) {
   const options = backend === 'gpu'
     ? { executionProviders: ['webgpu'] }
     : { executionProviders: ['wasm'] };
-  ort.env.wasm.numThreads = backend === 'gpu' ? 1 : Number($('threads').value) || 1;
+  // onnxruntime-web reads the thread count once, when its WebAssembly starts.
+  ort.env.wasm.numThreads = Number($('threads').value) || 1;
   const t0 = performance.now();
   const session = await ort.InferenceSession.create(`models/${file}`, options);
   log(`${meta.name} ${variant} ${backend}: loaded in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
@@ -104,37 +106,42 @@ function addRow(r) {
     <td class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : `✗ ${(r.top_move_agrees * 100).toFixed(0)}%`}</td></tr>`);
 }
 
-async function sweep(full) {
-  for (const b of ['quick', 'full']) $(b).disabled = true;
+async function sweep(full, gpuOnly = false) {
+  for (const b of BUTTONS) $(b).disabled = true;
   const runs = Number($('runs').value) || 20;
   const plan = [];
   for (const m of models) {
-    plan.push([m, 'int8', 'cpu', full ? [1, 8, 32] : [1, 8]]);
-    if (full) plan.push([m, 'fp32', 'cpu', [1, 8, 32]], [m, 'fp16', 'cpu', [8]]);
-    if (hasWebGPU) plan.push([m, 'fp16', 'gpu', full ? [1, 8, 32, 128] : [8, 32]]);
-    if (hasWebGPU && full) plan.push([m, 'fp32', 'gpu', [8, 32]]);
+    if (!gpuOnly) plan.push([m, 'int8', 'cpu', full ? [1, 8, 32] : [1, 8]]);
+    if (full && !gpuOnly) plan.push([m, 'fp32', 'cpu', [1, 8, 32]], [m, 'fp16', 'cpu', [8]]);
+    if (hasWebGPU) plan.push([m, 'fp16', 'gpu', full || gpuOnly ? [1, 8, 32, 128] : [8, 32]]);
+    if (hasWebGPU && (full || gpuOnly)) plan.push([m, 'fp32', 'gpu', [8, 32]]);
   }
   for (const [m, variant, backend, batches] of plan) {
     try {
       await bench(m, variant, backend, batches, runs);
     } catch (e) {
-      log(`${m.name} ${variant} ${backend}: FAILED ${e.message ?? e}`);
+      const error = String(e?.message ?? e);
+      failures.push({ network: m.name, format: variant, backend, error });
+      log(`${m.name} ${variant} ${backend}: FAILED ${error}`);
     }
   }
   log('done');
-  for (const b of ['quick', 'full']) $(b).disabled = false;
-  document.body.dataset.done = JSON.stringify({ env, results });
+  for (const b of BUTTONS) $(b).disabled = false;
+  $('copy').disabled = false;
+  document.body.dataset.done = JSON.stringify({ env, results, failures });
 }
 
+const BUTTONS = ['quick', 'full', 'gpu'];
 $('quick').onclick = () => sweep(false);
 $('full').onclick = () => sweep(true);
+$('gpu').onclick = () => sweep(false, true);
 $('copy').onclick = async () => {
-  const text = JSON.stringify({ env, results }, null, 1);
+  const text = JSON.stringify({ env, results, failures }, null, 1);
   try { await navigator.clipboard.writeText(text); log('results copied to the clipboard'); }
   catch { log(text); }
 };
 
-// ?auto=quick|full&runs=N starts a sweep on load (for automated checks).
+// ?auto=quick|full|gpu&runs=N starts a sweep on load (for automated checks).
 const params = new URLSearchParams(location.search);
 if (params.get('runs')) $('runs').value = params.get('runs');
-if (params.get('auto')) sweep(params.get('auto') === 'full');
+if (params.get('auto')) sweep(params.get('auto') === 'full', params.get('auto') === 'gpu');
