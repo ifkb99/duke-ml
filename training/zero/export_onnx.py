@@ -6,8 +6,8 @@ Export a DukeZeroNet checkpoint to ONNX, for running in a browser
     uv run python -m training.zero.export_onnx --random 64x4 web/latency/models/r64x4
 
 Writes <out>.fp32.onnx, <out>.fp16.onnx (half the size; fast on WebGPU) and
-<out>.int8.onnx (dense layers quantized to 8 bits; the policy layer is most of
-the parameters), plus <out>.json with sizes and, for real checkpoints, a few
+<out>.int8.onnx (MatMuls quantized to 8 bits; with the dense policy head
+that layer is most of the parameters), plus <out>.json with sizes and, for real checkpoints, a few
 positions with the expected outputs so the browser can check its results.
 
 The graph is written by hand from the weights (no PyTorch needed) and checked
@@ -30,7 +30,7 @@ from onnx import TensorProto, helper, numpy_helper
 
 from training.zero import env as E
 from training.zero import rules as R
-from training.zero.network import DukeZeroNet, make_forward, observe_batch
+from training.zero.network import N_CMD, POLICY_KEY, DukeZeroNet, make_forward, observe_batch
 
 EPS = 1e-6       # nnx.LayerNorm default
 OPSET = 18
@@ -87,8 +87,38 @@ class Graph:
         """[B,C,6,6] -> [B, 6*6*C] in the same order as JAX's NHWC reshape."""
         return self.op('Flatten', [self.op('Transpose', [x], perm=[0, 2, 3, 1])], axis=1)
 
+    def reshape(self, x, shape):
+        return self.op('Reshape', [x, self.const(np.array(shape, np.int64), 'shape')])
 
-def build(params: dict, blocks: int) -> onnx.ModelProto:
+    def per_square(self, x, channels):
+        """[B,C,6,6] -> [B, 36, C]: one row per square, like JAX's reshape(b, 36, C)."""
+        return self.reshape(self.op('Transpose', [x], perm=[0, 2, 3, 1]), [-1, R.N_SQ, channels])
+
+    def slice_last(self, x, start, end):
+        c = lambda v: self.const(np.array([v], np.int64))
+        return self.op('Slice', [x, c(start), c(end), c(-1)])
+
+
+def policy_dense(g, x, pooled, params):
+    pol = g.flatten_nhwc(g.relu(g.conv(x, params['policy_conv'])))
+    return g.dense(g.op('Concat', [pol, pooled], axis=1), params['policy_out'])
+
+
+def policy_spatial(g, x, pooled, params):
+    """network.DukeZeroNet.policy_logits, 'spatial' branch."""
+    sq = R.N_SQ
+    per_sq = g.per_square(g.conv(x, params['policy_sq']), sq + N_CMD)   # [B, from, 100]
+    q = g.per_square(g.conv(x, params['policy_q']), POLICY_KEY)          # [B, 36, K]
+    k = g.per_square(g.conv(x, params['policy_k']), POLICY_KEY)
+    bilinear = g.op('MatMul', [q, g.op('Transpose', [k], perm=[0, 2, 1])])        # [B, from, to]
+    bilinear = g.op('Mul', [bilinear, g.const(np.float32(1 / POLICY_KEY ** 0.5))])
+    moves = g.reshape(g.op('Add', [g.slice_last(per_sq, 0, sq), bilinear]), [-1, sq * sq])
+    commands = g.reshape(g.slice_last(per_sq, sq, sq + N_CMD), [-1, sq * N_CMD])
+    rest = g.dense(pooled, params['policy_misc'])                        # draw, 4 placements
+    return g.op('Concat', [moves, commands, rest], axis=1)
+
+
+def build(params: dict, blocks: int, policy_head: str = 'dense') -> onnx.ModelProto:
     g = Graph()
     x = g.op('Transpose', ['planes'], perm=[0, 3, 1, 2])                  # NHWC -> NCHW
     x = g.conv(x, params['stem'])
@@ -103,8 +133,7 @@ def build(params: dict, blocks: int) -> onnx.ModelProto:
     x = g.relu(g.layernorm_c(x, params['norm']))
     pooled = g.op('ReduceMean', [x, g.const(np.array([2, 3], np.int64))], keepdims=0)    # [B, C]
 
-    pol = g.flatten_nhwc(g.relu(g.conv(x, params['policy_conv'])))
-    logits = g.dense(g.op('Concat', [pol, pooled], axis=1), params['policy_out'])
+    logits = (policy_dense if policy_head == 'dense' else policy_spatial)(g, x, pooled, params)
     val = g.flatten_nhwc(g.relu(g.conv(x, params['value_conv'])))
     val = g.relu(g.dense(g.op('Concat', [val, pooled], axis=1), params['value_hidden']))
     val = g.op('Tanh', [g.dense(val, params['value_out'])])
@@ -142,32 +171,35 @@ def main():
     p.add_argument('checkpoint', nargs='?', type=Path)
     p.add_argument('out', type=Path, help='output path prefix, e.g. web/latency/models/az3net')
     p.add_argument('--random', metavar='CxB', help='random weights of this size instead of a checkpoint')
+    p.add_argument('--policy-head', default='dense', help="with --random: 'dense' or 'spatial'")
     a = p.parse_args()
 
     if a.random:
         c, b = (int(v) for v in a.random.split('x'))
-        model32 = DukeZeroNet(c, b, dtype=jnp.float32, rngs=nnx.Rngs(0))
+        head = a.policy_head
+        model32 = DukeZeroNet(c, b, head, dtype=jnp.float32, rngs=nnx.Rngs(0))
         _, params = nnx.split(model32)
         # Random (not zero) heads, so outputs aren't trivially constant.
         params = jax.tree.map(lambda x: x + 0.02 * jax.random.normal(jax.random.key(1), x.shape), params)
-        label = f'random {c}x{b}'
+        label = f'random {c}x{b} {head}'
     else:
         from training.zero.train import load_params
         _, params, ckpt = load_params(a.checkpoint)
         c, b = ckpt['config']['channels'], ckpt['config']['blocks']
-        label = f'{a.checkpoint.parent.name} iteration {ckpt["iteration"]} ({c}x{b})'
+        head = ckpt['config'].get('policy_head', 'dense')
+        label = f'{a.checkpoint.parent.name} iteration {ckpt["iteration"]} ({c}x{b} {head})'
     pure = nnx.to_pure_dict(params)
     pure = jax.tree.map(np.asarray, pure)
     pure['blocks'] = {int(k): v for k, v in pure['blocks'].items()}
 
-    model = build(pure, b)
+    model = build(pure, b, head)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     f32 = a.out.with_name(a.out.name + '.fp32.onnx')
     onnx.save(model, f32)
 
     # Check against JAX in float32 (training computes convolutions in bfloat16).
     import onnxruntime as ort
-    ref = DukeZeroNet(c, b, dtype=jnp.float32, rngs=nnx.Rngs(0))
+    ref = DukeZeroNet(c, b, head, dtype=jnp.float32, rngs=nnx.Rngs(0))
     gd, ref_params = nnx.split(ref)
     nnx.replace_by_pure_dict(ref_params, jax.tree.map(jnp.asarray, nnx.to_pure_dict(params)))
     planes, feats, legal = sample_inputs()
@@ -201,8 +233,12 @@ def main():
               f'top move agrees {variants[name]["top_move_agrees"]:.2f}')
 
     n_params = int(sum(np.size(x) for x in jax.tree.leaves(pure)))
-    flops = 2 * 36 * 9 * (E.N_PLANES * c + 2 * b * c * c) + 2 * ((36 * 32 + c) * R.N_ACTIONS + (36 * 8 + c) * 128)
-    meta = {'label': label, 'channels': c, 'blocks': b, 'params': n_params, 'mflops_per_eval': flops / 1e6,
+    sq = R.N_SQ
+    flops = 2 * sq * 9 * (E.N_PLANES * c + 2 * b * c * c) + 2 * (sq * 8 * c + (sq * 8 + c) * 128)
+    flops += (2 * (sq * 32 * c + (sq * 32 + c) * R.N_ACTIONS) if head == 'dense' else
+              2 * (sq * c * (sq + N_CMD + 2 * POLICY_KEY) + sq * sq * POLICY_KEY + 5 * c))
+    meta = {'label': label, 'channels': c, 'blocks': b, 'policy_head': head, 'params': n_params,
+            'mflops_per_eval': flops / 1e6,
             'variants': variants,
             'check': {'planes': planes.reshape(-1).tolist(), 'features': feats.reshape(-1).tolist(),
                       'n': int(len(planes)), 'value': want_value.tolist(),

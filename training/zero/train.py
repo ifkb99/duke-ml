@@ -73,6 +73,7 @@ class Config:
     # network
     channels: int = 96
     blocks: int = 6
+    policy_head: str = 'dense'     # 'spatial': ~21K-parameter head instead of ~4.6M (network.py)
     # self-play
     games: int = 872               # parallel self-play games on the actor GPU
     learner_games: int = 792       # more self-play games on the learner GPU, which
@@ -274,7 +275,7 @@ def load_params(path: Path):
     with path.open('rb') as f:
         ckpt = pickle.load(f)
     c = ckpt['config']
-    model = DukeZeroNet(c['channels'], c['blocks'], rngs=nnx.Rngs(0))
+    model = DukeZeroNet(c['channels'], c['blocks'], c.get('policy_head', 'dense'), rngs=nnx.Rngs(0))
     graphdef, params = nnx.split(model)
     nnx.replace_by_pure_dict(params, ckpt['params'])
     return graphdef, params, ckpt
@@ -417,7 +418,7 @@ def main(cfg: Config):
     learner, actor = devices[0], devices[-1]
     log(f'devices: learner={learner} actor={actor}')
 
-    model = DukeZeroNet(cfg.channels, cfg.blocks, rngs=nnx.Rngs(cfg.seed))
+    model = DukeZeroNet(cfg.channels, cfg.blocks, cfg.policy_head, rngs=nnx.Rngs(cfg.seed))
     graphdef, params = nnx.split(model)
     forward = make_forward(graphdef)
     tx = optax.chain(optax.clip_by_global_norm(1.0),
@@ -434,9 +435,9 @@ def main(cfg: Config):
         forward = make_forward(graphdef)
         opt_state = ckpt['opt_state']
         start_iteration = ckpt['iteration']
-        shape = (ckpt['config']['channels'], ckpt['config']['blocks'])
-        if shape != (cfg.channels, cfg.blocks):
-            log(f'note: using the checkpoint network {shape}, not --channels/--blocks')
+        shape = (ckpt['config']['channels'], ckpt['config']['blocks'], ckpt['config'].get('policy_head', 'dense'))
+        if shape != (cfg.channels, cfg.blocks, cfg.policy_head):
+            log(f'note: using the checkpoint network {shape}, not --channels/--blocks/--policy-head')
         log(f'resumed from {resume_from} at iteration {start_iteration}')
     else:
         (run_dir / 'config.json').write_text(json.dumps(asdict(cfg), indent=2))

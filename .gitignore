@@ -14,4 +14,4 @@ checkpoints/*
 training/zero/tests/data/
 
 # Training runs (checkpoints, metrics)
-runs/
+runs

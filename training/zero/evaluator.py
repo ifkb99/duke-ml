@@ -231,7 +231,7 @@ class Evaluator:
 
     def arch(self, graphdef, config):
         """Compiled functions shared by every checkpoint of one network shape."""
-        key = (config['channels'], config['blocks'])
+        key = (config['channels'], config['blocks'], config.get('policy_head', 'dense'))
         if key not in self.archs:
             fwd = make_forward(graphdef)
             self.archs[key] = {'forward': fwd, 'search': jax.jit(S.make_search(fwd, SIMS, 16, 16)),

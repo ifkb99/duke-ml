@@ -153,6 +153,25 @@ def test_training_reduces_loss(samples):
     assert float(m['value_loss']) < float(m0['value_loss'])
 
 
+def test_spatial_head_trains_and_round_trips(tmp_path, samples):
+    graphdef, params = nnx.split(DukeZeroNet(8, 1, 'spatial', dtype=jnp.float32, rngs=nnx.Rngs(0)))
+    _, _, tx = _tiny()
+    step = T.make_train_step(make_forward(graphdef), tx)
+    opt_state = tx.init(params)
+    b = {k: v[:128] for k, v in samples.items()}
+    _, _, m0 = step(params, opt_state, b)
+    for _ in range(60):
+        params, opt_state, m = step(params, opt_state, b)
+    assert float(m['policy_loss']) < float(m0['policy_loss'])
+
+    path = tmp_path / 'latest.pkl'
+    T.save_checkpoint(path, params, opt_state, 3, T.Config(channels=8, blocks=1, policy_head='spatial'))
+    loaded_graphdef, loaded, ckpt = T.load_params(path)
+    assert ckpt['config']['policy_head'] == 'spatial'
+    for x, y in zip(jax.tree.leaves(params), jax.tree.leaves(loaded)):
+        np.testing.assert_array_equal(np.asarray(x), np.asarray(y))
+
+
 def test_checkpoint_round_trip(tmp_path, samples):
     graphdef, params, tx = _tiny()
     forward = make_forward(graphdef)
