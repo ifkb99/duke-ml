@@ -1,6 +1,8 @@
 # Duke ML
 One of my favorite games to play with my brothers is "The Duke". In short: it's chess on a smaller board where you can summon random pieces from a bag
 
+Try it now at [Duke](https://duke.nyaaa.fun/)!
+
 ## Purpose
 I made this repo for two reasons:
 - I want a way to play online with my brothers (and others) from afar
