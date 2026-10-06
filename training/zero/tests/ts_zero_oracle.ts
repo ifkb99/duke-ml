@@ -11,6 +11,10 @@
  *   {"op": "net", "W": [[..]], "U": [[..]], "v": [..]}   -> {} sets the test network
  *   {"op": "search", "state": S, "simulations": n, "maxConsidered": m, "maxDepth": d,
  *    "gumbel"?: [...], "maxBatch"?: b}  -> {"action", "weights" (legal only), "searchValue", ...}
+ *   {"op": "fromTs", "game": SerializedGameState}  -> {"state": S}
+ *   {"op": "toMove", "state": S, "actions": [...]}  -> {"moves": [GameMove...]}
+ *   {"op": "onnx", "path": file}  -> {} uses that ONNX model (onnxruntime-web on the CPU)
+ *     instead of the test network for "search"
  * The test network (h = tanh(x W), logits = h U, value = tanh(h v), x = the
  * flattened planes and features) is simple enough to write identically in JAX.
  * S: {tile, owner, side, bags (flat [2*15]), player, pending, ply, done,
@@ -21,6 +25,9 @@ import {createInterface} from 'node:readline';
 import * as R from '../../../packages/ai/src/zero/rules.js';
 import * as E from '../../../packages/ai/src/zero/env.js';
 import {search, type NetOutput} from '../../../packages/ai/src/zero/search.js';
+import {actionToMove, fromGameState, moveToAction} from '../../../packages/ai/src/zero/bridge.js';
+import {onnxEvaluate} from '../../../packages/ai/src/zero/onnx.js';
+import type {Evaluate} from '../../../packages/ai/src/zero/search.js';
 
 type Json = Record<string, any>;
 
@@ -49,8 +56,9 @@ const ones = (a: ArrayLike<number>) => {
 };
 
 let net: {W: number[][]; U: number[][]; v: number[]} | null = null;
+let onnx: Evaluate | null = null;
 
-async function evaluate(states: E.State[]): Promise<NetOutput[]> {
+async function testNet(states: E.State[]): Promise<NetOutput[]> {
   const {W, U, v} = net!;
   const H = v.length;
   const planes = new Float32Array(E.PLANES_SIZE), features = new Float32Array(E.N_FEATURES);
@@ -89,12 +97,30 @@ async function drain() {
 async function handle(req: Json): Promise<Json> {
   let reply: Json;
   switch (req.op) {
+    case 'fromTs':
+      reply = {state: toJson(fromGameState(req.game))};
+      break;
+    case 'toMove': {
+      const st = fromJson(req.state);
+      const moves = req.actions.map((a: number) => actionToMove(a, st));
+      reply = {moves, back: moves.map((m: any) => moveToAction(m, st))};
+      break;
+    }
     case 'net':
       net = {W: req.W, U: req.U, v: req.v};
+      onnx = null;
       reply = {};
       break;
+    case 'onnx': {
+      const ort = await import('onnxruntime-web');
+      ort.env.wasm.numThreads = 1;
+      const session = await ort.InferenceSession.create(req.path, {executionProviders: ['wasm']});
+      onnx = onnxEvaluate(session, ort.Tensor);
+      reply = {};
+      break;
+    }
     case 'search': {
-      const r = await search(fromJson(req.state), evaluate, {
+      const r = await search(fromJson(req.state), onnx ?? testNet, {
         simulations: req.simulations, maxConsidered: req.maxConsidered, maxDepth: req.maxDepth,
         gumbel: req.gumbel, maxBatch: req.maxBatch});
       const legal = ones(fromJson(req.state).legal);

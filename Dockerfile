@@ -4,6 +4,7 @@ COPY package*.json ./
 COPY packages/engine/package.json packages/engine/
 COPY packages/ai/package.json packages/ai/
 COPY packages/web/package.json packages/web/
+COPY packages/harness/package.json packages/harness/
 RUN npm ci
 COPY . .
 RUN npm run build

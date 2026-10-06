@@ -161,3 +161,70 @@ def test_batching_does_not_change_the_search(oracle, search_positions):
         np.testing.assert_allclose(one['weights'], many['weights'], rtol=1e-12)
         fewer_calls += many['batches'] < one['batches']
     assert fewer_calls >= 6
+
+
+# ---------------------------------------------------------------------------
+# Engine <-> zero conversions (bridge.ts vs ts_bridge.py)
+# ---------------------------------------------------------------------------
+
+def test_bridge_matches_python(oracle):
+    from training.zero import ts_bridge as TB
+    checked = 0
+    for seed in range(300, 306):
+        for s, a, after, nxt in random_game(seed):
+            if int(s.pending) == E.NONE:
+                got = oracle.ask({'op': 'fromTs', 'game': TB.state_to_ts(s)})['state']
+                want = to_json(s)
+                for k in ('tile', 'owner', 'side', 'bags', 'player', 'ply', 'legal'):
+                    assert got[k] == want[k], k
+                acts = [x for x in np.flatnonzero(np.asarray(s.legal)).tolist() if x != R.DRAW_ACTION]
+            else:
+                # Holding a drawn tile: place actions become resolved `place` moves.
+                acts = np.flatnonzero(np.asarray(s.legal)).tolist()
+            r = oracle.ask({'op': 'toMove', 'state': to_json(s), 'actions': acts})
+            pending = int(s.pending) if int(s.pending) >= 0 else None
+            assert r['moves'] == [TB.action_to_move(x, s, pending) for x in acts]
+            assert r['back'] == acts
+            checked += len(acts)
+    assert checked > 1000
+
+
+# ---------------------------------------------------------------------------
+# End to end: a real checkpoint, exported to ONNX, searched in TypeScript
+# ---------------------------------------------------------------------------
+
+def test_onnx_search_matches_jax(oracle, search_positions, tmp_path):
+    """The browser pipeline (observe -> ONNX -> TS search) against the JAX
+    search with the same weights. ONNX and JAX differ by ~1e-5, which can flip
+    a near-tie, so most (not all) positions must agree exactly."""
+    import subprocess
+    import sys
+    from flax import nnx
+    import jax.numpy as jnp
+    from training.zero import search as S
+    from training.zero import train as T
+    from training.zero.network import DukeZeroNet, make_forward
+    from training.zero.tests.conftest import REPO, stack
+    ckpt = REPO / 'runs/az2/ckpt_001000.pkl'
+    if not ckpt.exists():
+        pytest.skip('no az2 checkpoint')
+    subprocess.run([sys.executable, '-m', 'training.zero.export_onnx', str(ckpt), str(tmp_path / 'net')],
+                   cwd=REPO, check=True, capture_output=True)
+    oracle.ask({'op': 'onnx', 'path': str(tmp_path / 'net.fp32.onnx')})
+
+    _, params, c = T.load_params(ckpt)
+    graphdef, params32 = nnx.split(DukeZeroNet(c['config']['channels'], c['config']['blocks'],
+                                               dtype=jnp.float32, rngs=nnx.Rngs(0)))
+    nnx.replace_by_pure_dict(params32, nnx.to_pure_dict(params))
+    positions = search_positions[:16]
+    out = jax.jit(S.make_search(make_forward(graphdef), 32, 16, 16), static_argnums=3)(
+        params32, jax.random.key(0), stack(positions), 0.0)
+    agree = 0
+    for b, s in enumerate(positions):
+        ts = oracle.ask({'op': 'search', 'state': to_json(s), 'simulations': 32, 'maxConsidered': 16,
+                         'maxDepth': 16})
+        legal = np.flatnonzero(np.asarray(s.legal))
+        w = np.asarray(out.action_weights[b])[legal]
+        if ts['action'] == int(out.action[b]) and np.abs(np.asarray(ts['weights']) - w).max() < 1e-3:
+            agree += 1
+    assert agree >= len(positions) - 2, f'{agree}/{len(positions)} positions agree'
