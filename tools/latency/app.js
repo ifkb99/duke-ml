@@ -9,11 +9,26 @@ const FEATURES = 47;
 const $ = id => document.getElementById(id);
 const results = [];
 const failures = [];
+const session = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
 function log(msg) {
   $('log').textContent += msg + '\n';
   $('log').scrollTop = $('log').scrollHeight;
 }
+
+// Send everything so far to the server (serve.py saves it under results/).
+// Called after every row, so a sweep cut short still leaves its data behind.
+// Reports are chained so an older snapshot never lands after a newer one.
+let reporting = Promise.resolve();
+function report(done = false) {
+  const body = JSON.stringify({ session, done, env, results, failures, log: $('log').textContent });
+  reporting = reporting.then(() => fetch('report', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+  })).catch(() => { /* served without serve.py: Copy results still works */ });
+  return reporting;
+}
+addEventListener('error', e => { log(`error: ${e.message}`); report(); });
+addEventListener('unhandledrejection', e => { log(`error: ${e.reason?.message ?? e.reason}`); report(); });
 
 const hasWebGPU = !!navigator.gpu && !!(await navigator.gpu.requestAdapter().catch(() => null));
 const cores = navigator.hardwareConcurrency || 1;
@@ -91,6 +106,7 @@ async function bench(meta, variant, backend, batches, runs) {
     results.push(row);
     addRow(row);
     $('copy').disabled = false;
+    report();
     await new Promise(r => setTimeout(r, 0));
   }
   await session.release();
@@ -123,9 +139,12 @@ async function sweep(full, gpuOnly = false) {
       const error = String(e?.message ?? e);
       failures.push({ network: m.name, format: variant, backend, error });
       log(`${m.name} ${variant} ${backend}: FAILED ${error}`);
+      report();
     }
   }
   log('done');
+  await report(true);
+  log('results sent to the computer');
   for (const b of BUTTONS) $(b).disabled = false;
   $('copy').disabled = false;
   document.body.dataset.done = JSON.stringify({ env, results, failures });

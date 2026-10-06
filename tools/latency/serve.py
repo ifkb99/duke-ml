@@ -10,10 +10,15 @@ warn once: choose "Advanced -> Proceed" (Chrome) or "Show details -> visit
 this website" (Safari). Phone and computer must be on the same network; if
 the page doesn't load, the firewall may be blocking the port
 (e.g. `sudo ufw allow 8443/tcp`).
+
+The page posts its results, failures and log to /report as it goes; each page
+visit is saved as results/<time>-<device>.json, so nothing needs pasting.
 """
 
 import argparse
 import http.server
+import json
+import re
 import socket
 import ssl
 import subprocess
@@ -22,6 +27,21 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CERT, KEY = HERE / '.cert' / 'cert.pem', HERE / '.cert' / 'key.pem'
+RESULTS = HERE / 'results'
+MAX_REPORT = 4_000_000
+
+
+def device_slug(user_agent):
+    """'... (Linux; Android 10; K) ... Chrome/154.0 ...' -> 'android10-chrome154'."""
+    # Most specific first: Android user agents also say "Linux".
+    os_match = next(filter(None, (re.search(pat, user_agent) for pat in (
+        r'Android [\d.]+', r'iPhone OS \d+', r'iPad', r'Mac OS X', r'Windows NT [\d.]+', r'Linux'))), None)
+    browser = re.search(r'(Firefox|Edg|CriOS|Chrome|Version)/(\d+)', user_agent)
+    parts = [os_match.group(0) if os_match else 'unknown']
+    if browser:
+        name = {'Edg': 'edge', 'CriOS': 'chrome', 'Version': 'safari'}.get(browser.group(1), browser.group(1))
+        parts.append(name + browser.group(2))
+    return re.sub(r'[^a-z0-9]+', '', parts[0].lower()) + ''.join('-' + p.lower() for p in parts[1:])
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -36,6 +56,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Cross-Origin-Resource-Policy', 'same-origin')
         self.send_header('Cache-Control', 'no-cache')
         super().end_headers()
+
+    def do_POST(self):
+        if self.path != '/report':
+            return self.send_error(404)
+        n = int(self.headers.get('Content-Length', 0))
+        if not 0 < n <= MAX_REPORT:
+            return self.send_error(413)
+        try:
+            report = json.loads(self.rfile.read(n))
+            session = re.sub(r'[^0-9A-Za-z-]', '', str(report['session']))[:40]
+        except (ValueError, KeyError, TypeError):
+            return self.send_error(400)
+        report['client'] = self.client_address[0]
+        name = f"{session}-{device_slug(str(report.get('env', {}).get('browser', '')))}.json"
+        RESULTS.mkdir(exist_ok=True)
+        (RESULTS / name).write_text(json.dumps(report, indent=1, ensure_ascii=False))
+        print(f"report {name}: {len(report.get('results', []))} rows, "
+              f"{len(report.get('failures', []))} failures{' (done)' if report.get('done') else ''}", flush=True)
+        self.send_response(204)
+        self.end_headers()
 
 
 def lan_addresses():

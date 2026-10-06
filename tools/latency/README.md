@@ -10,8 +10,10 @@ uv run python tools/latency/serve.py         # HTTPS on port 8443; prints the UR
 ```
 
 On the phone (same Wi-Fi): open the printed `https://<computer-ip>:8443/`,
-accept the self-signed certificate warning once, press **Quick sweep**, then
-**Copy results** and paste them back.
+accept the self-signed certificate warning once, and press **Quick sweep**.
+The page sends its results, failures and log to the server as it goes; each
+visit is saved as `results/<time>-<device>.json` (and the server prints a line
+per report). **Copy results** is still there for a page served some other way.
 
 Networks tested: az2 (96×6) and az3-net (128×10) from checkpoints, plus random
 64×4 and 192×12 to show how latency scales with size. Each comes as fp32,
