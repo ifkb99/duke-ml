@@ -5,7 +5,7 @@ Minimax is CPU-bound and single-threaded per process, so we run one process
 per core and fan requests out with a thread pool. Each thread owns exactly one
 process, so no locking is needed beyond the pool's queue.
 
-    with MinimaxPool() as pool:          # default: one process per CPU thread
+    with MinimaxPool() as pool:          # default: one process per usable CPU thread
         moves = pool.best_moves([ts_state, ...], depth=4)
 """
 
@@ -47,7 +47,7 @@ class _Worker:
 
 class MinimaxPool:
     def __init__(self, workers: int | None = None):
-        n = workers or os.cpu_count() or 1
+        n = workers or len(os.sched_getaffinity(0))   # CPUs this process may use
         with ThreadPoolExecutor(n) as ex:
             self._workers = list(ex.map(lambda _: _Worker(), range(n)))
         self._free: queue.Queue[_Worker] = queue.Queue()
