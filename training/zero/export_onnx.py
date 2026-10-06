@@ -57,8 +57,12 @@ class Graph:
     # --- layers (activations are NCHW inside the graph) ---
     def conv(self, x, p):
         w = np.transpose(np.asarray(p['kernel'], np.float32), (3, 2, 0, 1))      # HWIO -> OIHW
+        k = w.shape[2]
+        # Every attribute spelled out: ONNX has defaults, but onnxruntime-web's
+        # WebGPU Conv rejects a node without dilations ("dilations should be 2D").
         return self.op('Conv', [x, self.const(w, 'w'), self.const(np.asarray(p['bias'], np.float32), 'b')],
-                       pads=[1, 1, 1, 1] if w.shape[2] == 3 else [0, 0, 0, 0])
+                       kernel_shape=[k, k], strides=[1, 1], dilations=[1, 1], group=1,
+                       pads=[k // 2] * 4)
 
     def layernorm_c(self, x, p):
         """LayerNorm over the channel axis of an NCHW tensor."""
