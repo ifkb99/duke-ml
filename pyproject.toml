@@ -23,5 +23,7 @@ packages = ["training"]
 
 [dependency-groups]
 dev = [
+    "onnx>=1.23.2",
+    "onnxruntime>=1.30.0",
     "pytest>=9.1.1",
 ]

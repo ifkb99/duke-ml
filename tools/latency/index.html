@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Duke Net Latency</title>
+<style>
+  :root { --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6b66; --line: #e2e1dc; --accent: #2f6f4f; --bad: #b3261e; --card: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #161615; --fg: #ecebe6; --muted: #9a9a93; --line: #2e2e2b; --accent: #7cc49b; --bad: #f2867f; --card: #1e1e1c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.35rem; margin: 0 0 4px; }
+  p.lead { margin: 0 0 16px; color: var(--muted); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+  h2 { font-size: 1rem; margin: 0 0 8px; }
+  .env { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 0.9rem; }
+  .env dt { color: var(--muted); }
+  .env dd { margin: 0; overflow-wrap: anywhere; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+  label { font-size: 0.9rem; }
+  select, input { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--bg); cursor: pointer; }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { text-align: left; }
+  th { color: var(--muted); font-weight: 600; }
+  td.ok { color: var(--accent); } td.bad { color: var(--bad); }
+  #log { font: 12px/1.4 ui-monospace, monospace; color: var(--muted); white-space: pre-wrap; max-height: 160px; overflow-y: auto; margin: 0; }
+  .hint { color: var(--muted); font-size: 0.85rem; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Duke network latency test</h1>
+  <p class="lead">How fast can this device run the Duke AI's network? Each row times one network size, number format and backend. "Sims in 3 s" is how many search simulations fit in a 3-second move.</p>
+
+  <section>
+    <h2>This device</h2>
+    <dl class="env" id="env"></dl>
+  </section>
+
+  <section>
+    <h2>Run</h2>
+    <div class="controls">
+      <button id="quick">Quick sweep</button>
+      <button id="full" class="secondary">Full sweep</button>
+      <label>Timed runs <input id="runs" type="number" value="20" min="3" max="200" style="width:4.5em"></label>
+      <label>Threads <input id="threads" type="number" min="1" max="32" style="width:3.5em"></label>
+      <button id="copy" class="secondary" disabled>Copy results</button>
+    </div>
+    <p class="hint">Quick sweep: every network on the CPU (int8, batch 1 and 8) and on the GPU (fp16, batch 8) if WebGPU is available. Full sweep adds fp32/fp16 on the CPU and more batch sizes. Keep the screen on; it takes a few minutes.</p>
+  </section>
+
+  <section>
+    <h2>Results</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>network</th><th>format</th><th>backend</th><th>MB</th><th>batch</th><th>ms / batch</th><th>ms / eval</th><th>evals / s</th><th>sims in 3 s</th><th>correct</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Log</h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>
