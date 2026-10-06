@@ -442,7 +442,7 @@ def main(cfg: Config):
         (run_dir / 'config.json').write_text(json.dumps(asdict(cfg), indent=2))
     log(f'start (commit {git_commit()})', kind='start', commit=git_commit(),
         resumed_from=str(resume_from) if resume_from else None,
-        iteration=start_iteration, config=asdict(cfg))
+        iteration=start_iteration, gpus=len(devices), config=asdict(cfg))
     params = jax.device_put(params, learner)
     opt_state = jax.device_put(opt_state, learner)
 

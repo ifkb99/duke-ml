@@ -72,6 +72,23 @@ ps -o pid,etime,cmd -p $(cat runs/az2/pid)   # prints a line with elapsed time i
 nvidia-smi                                   # both GPUs should show a python process
 ```
 
+### Dashboard (Weights & Biases)
+
+Charts for every run: https://wandb.ai/ifkb99-na/duke-ml
+
+Training itself only writes `metrics.jsonl`; a separate uploader mirrors it to
+W&B, so network trouble can never stall training. Start it alongside a run:
+
+```bash
+training/zero/wandb_follow.sh az3-net az3-sims        # follow these runs (detached)
+GPUS=1 training/zero/wandb_follow.sh az3-net          # runs started before train.py recorded its GPU count
+kill -- -$(cat runs/az3-net/wandb_pid)                # stop following
+uv run python -m training.zero.wandb_sync az2         # one-off upload of a finished run
+```
+
+Useful x-axes in the W&B charts: `iteration`, `games`, and `gpu_hours`, the
+fair axis for comparing runs on different numbers of GPUs.
+
 ## Stop
 
 ```bash

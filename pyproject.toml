@@ -10,6 +10,8 @@ dependencies = [
     "mctx>=0.0.71",
     "optax>=0.2.8",
     "orbax>=0.1.9",
+    "wandb>=0.30.0",
+    "weave>=0.53.11",
 ]
 
 [build-system]
