@@ -88,3 +88,22 @@ records with config and git commit.
 **What success looks like:** `fresh_value_corr_mc` rising well above az1's
 ~0.05, `fresh_policy_kl` falling, ladder scores above 0.5, and then the minimax
 scores moving.
+
+### az2 first 100 iterations (2026-10-06, 09:34 → 09:55)
+
+Warm-start (policy only): early-stopped at step 1280 of 4,000 (held-out
+policy loss 1.041, about 8 passes over the data).
+
+| point | random | minimax 2 | minimax 4 | fresh value corr | policy/search agree |
+|---|---|---|---|---|---|
+| after warm-start | 1.00 | 0.44 | 0.11 | — | — |
+| iteration 10 | | | | 0.07 | 0.67 |
+| iteration 25 | 1.00 | 0.80 | 0.33 | | |
+| iteration 50 | 1.00 | 0.78 | 0.27 | 0.26 | 0.66 |
+| iteration 75 | 1.00 | 0.78 | 0.41 | | |
+| iteration 100 | 1.00 | **0.91** | **0.46** | 0.26 | 0.75 |
+
+**Ladder at iteration 100 vs the warm-start network: 0.94.** It is learning;
+az1 scored 0.49 between iterations 2200 and 200. In 20 minutes az2 passed
+everything az1 reached in 10.5 hours (best az1 scores: minimax 2 0.56,
+minimax 4 0.14).
