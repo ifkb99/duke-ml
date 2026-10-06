@@ -5,10 +5,10 @@ description = "Neural network training for The Duke board game"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "flax>=0.12.5",
-    "jax[cuda13]>=0.9.1",
+    "flax>=0.12.10",
+    "jax[cuda13]>=0.11.2",
     "mctx>=0.0.71",
-    "optax>=0.2.6",
+    "optax>=0.2.8",
     "orbax>=0.1.9",
 ]
 

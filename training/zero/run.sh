@@ -11,6 +11,8 @@ shift
 mkdir -p "runs/$RUN"
 
 # Leave some GPU memory for other work (tests, evaluation) on the same cards.
+# Print a Python stack trace if the process dies from a native crash (segfault).
+export PYTHONFAULTHANDLER=1
 export XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.6}
 
 nohup setsid bash -c '

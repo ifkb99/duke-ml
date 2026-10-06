@@ -13,6 +13,7 @@ import json
 import os
 import queue
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -31,12 +32,17 @@ class _Worker:
 
     def ask(self, state: dict, depth: int) -> dict:
         self.proc.stdin.write(json.dumps({'id': 0, 'state': state, 'depth': depth}) + '\n')
-        reply = json.loads(self.proc.stdout.readline())
-        return reply['move']
+        line = self.proc.stdout.readline()
+        if not line:
+            raise ConnectionError(f'minimax server exited (code {self.proc.wait()})')
+        return json.loads(line)['move']
 
     def close(self):
-        self.proc.stdin.close()
-        self.proc.wait(timeout=10)
+        try:
+            self.proc.stdin.close()
+            self.proc.wait(timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            self.proc.kill()
 
 
 class MinimaxPool:
@@ -52,6 +58,14 @@ class MinimaxPool:
     def _ask(self, state, depth):
         w = self._free.get()
         try:
+            return w.ask(state, depth)
+        except (ConnectionError, OSError, ValueError) as e:
+            # A server died (or answered garbage): replace it and retry once,
+            # so one bad process doesn't kill a long training run.
+            print(f'[minimax_pool] {e}; restarting worker', file=sys.stderr, flush=True)
+            w.close()
+            w = _Worker()
+            self._workers.append(w)
             return w.ask(state, depth)
         finally:
             self._free.put(w)
