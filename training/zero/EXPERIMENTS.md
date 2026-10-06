@@ -67,11 +67,18 @@ Changes from az1 (everything else the same):
 | value target | final result | 10-step bootstrapped return (`value_nstep=10`) | far less noise per target |
 | sample reuse | 4 | 1 | az1 memorized its buffer |
 | replay buffer | 1M | 2M | more different games per window |
-| warm-start | 4,000 steps (~22 passes) | early-stopped on 10% held-out games | az1's warm-start value head was memorized |
+| warm-start | 4,000 steps (~22 passes), policy + value | policy only, early-stopped on 10% held-out games | az1's warm-start value head was memorized |
+| value head at start | random init | output layer zero-initialized (value 0 everywhere) | honest "don't know" instead of noise |
 | replay at self-play start | kept the minimax samples | empty | minimax samples only have result targets |
 | games per GPU | 960 / 704 | 872 / 792 | less SGD on GPU 0 now |
 
 Warm-start data: reused `runs/az1/imitation_data.npz` (same 3,000 minimax games).
+
+First attempt (09:30, aborted after the warm-start): trained policy + value with
+early stopping on their sum. Held-out value loss got worse from the first check
+on (0.975 → 1.125 by step 896, already worse than predicting 0, ≈0.95) while
+held-out policy loss kept improving (1.20 → 1.12), so the sum hid the value
+head memorizing. Restarted with the policy-only warm-start.
 
 New logging (`metrics.jsonl`): `fresh_*` value and policy stats on every
 iteration's new games before training on them, `ladder` matches against the

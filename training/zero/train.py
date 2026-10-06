@@ -19,11 +19,13 @@ checkpoint, metrics line. Everything is logged to runs/<run>/metrics.jsonl.
 
 Before self-play starts, the network is warm-started by imitating minimax:
 we play minimax-vs-minimax games and train the policy head to predict
-minimax's move and the value head to predict the result. It gives self-play
-a sensible starting point instead of random moves. 10% of the games are held
-out, and the warm-start stops when the loss on them stops improving: a few
-thousand games are easy to memorize, and a memorized value head is
-confidently wrong on everything else (see EXPERIMENTS.md, az1).
+minimax's move. It gives self-play a sensible starting point instead of
+random moves. 10% of the games are held out, and the warm-start stops when
+the loss on them stops improving. The value head is NOT trained on these
+games by default (`imitation_value_weight=0`): a few thousand game results
+are easy to memorize, and a memorized value head is confidently wrong on
+everything else (see EXPERIMENTS.md, az1). It starts at exactly 0 and learns
+from self-play.
 
 Diagnostics logged to metrics.jsonl (kind='train'), measured on each
 iteration's new games *before* training on them, so they are honest
@@ -98,6 +100,8 @@ class Config:
     imitation_holdout: float = 0.1 # fraction of minimax games held out
     imitation_check_every: int = 128
     imitation_patience: int = 3    # checks without improvement before stopping
+    imitation_value_weight: float = 0.0  # 0 = warm-start the policy only: a value head
+                                   # fit to 3k minimax games just memorizes them (az1/az2)
     # evaluation / bookkeeping
     iterations: int = 100_000
     eval_every: int = 25
@@ -113,8 +117,8 @@ class Config:
 # Learning
 # ---------------------------------------------------------------------------
 
-def make_loss_fn(forward):
-    """loss_fn(params, batch) -> (total loss, metrics)."""
+def make_loss_fn(forward, value_weight: float = 1.0):
+    """loss_fn(params, batch) -> (policy loss + value_weight * value loss, metrics)."""
     legal_actions = jax.vmap(E.legal_actions)
     observe = jax.vmap(E.observe_arrays)
 
@@ -140,13 +144,13 @@ def make_loss_fn(forward):
             'value_loss': value_loss,
             'policy_top1': jnp.sum(top1 * has_policy) / jnp.maximum(has_policy.sum(), 1),
         }
-        return policy_loss + value_loss, metrics
+        return policy_loss + value_weight * value_loss, metrics
 
     return loss_fn
 
 
-def make_train_step(forward, tx):
-    grad_fn = jax.value_and_grad(make_loss_fn(forward), has_aux=True)
+def make_train_step(forward, tx, value_weight: float = 1.0):
+    grad_fn = jax.value_and_grad(make_loss_fn(forward, value_weight), has_aux=True)
 
     @jax.jit
     def train_step(params, opt_state, batch):
@@ -200,7 +204,7 @@ def make_diagnostics(forward):
     return diag
 
 
-def make_train_steps(forward, tx):
+def make_train_steps(forward, tx, value_weight: float = 1.0):
     """Several SGD steps in ONE jitted call: train_steps(params, opt, batches).
 
     `batches` has a leading [n_steps] axis. Launching a jitted function costs
@@ -208,7 +212,7 @@ def make_train_steps(forward, tx):
     one-call-per-step training launch-bound; scanning over steps on the device
     pays that once per call. Returns metrics averaged over the steps.
     """
-    step = make_train_step(forward, tx)
+    step = make_train_step(forward, tx, value_weight)
 
     @jax.jit
     def train_steps(params, opt_state, batches):
@@ -354,8 +358,9 @@ def imitate(cfg, samples, params, opt_state, train_steps_fn, loss_eval, learner,
                 kind='imitation', step=step, epoch=step * cfg.batch / train.size,
                 train_policy_loss=tr['policy_loss'], train_value_loss=tr['value_loss'],
                 heldout_policy_loss=pl, heldout_value_loss=vl)
-            if pl + vl < best[0] - 1e-3:
-                best, bad = (pl + vl, params, opt_state, step), 0
+            score = pl + cfg.imitation_value_weight * vl
+            if score < best[0] - 1e-3:
+                best, bad = (score, params, opt_state, step), 0
             else:
                 bad += 1
                 if bad >= cfg.imitation_patience:
@@ -458,7 +463,8 @@ def main(cfg: Config):
         if resume_from is None and cfg.imitation_games > 0:
             key, k = jax.random.split(key)
             samples = imitation_data(cfg, pool, k, log, run_dir / 'imitation_data.npz')
-            params, opt_state = imitate(cfg, samples, params, opt_state, train_steps_fn,
+            params, opt_state = imitate(cfg, samples, params, opt_state,
+                                        make_train_steps(forward, tx, cfg.imitation_value_weight),
                                         loss_eval, learner, np_rng, log)
             key, k = jax.random.split(key)
             results = evaluate(cfg, search, params, pool, k)

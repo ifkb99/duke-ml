@@ -59,7 +59,8 @@ class DukeZeroNet(nnx.Module):
                                      kernel_init=nnx.initializers.zeros)  # uniform prior at init
         self.value_conv = nnx.Conv(c, 8, (1, 1), dtype=dtype, rngs=rngs)
         self.value_hidden = nnx.Linear(sq * 8 + c, 128, rngs=rngs)
-        self.value_out = nnx.Linear(128, 1, rngs=rngs)
+        self.value_out = nnx.Linear(128, 1, rngs=rngs,
+                                    kernel_init=nnx.initializers.zeros)  # value 0 at init
 
     def __call__(self, planes, features):
         b = planes.shape[0]
