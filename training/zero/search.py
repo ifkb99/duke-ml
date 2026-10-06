@@ -233,20 +233,20 @@ def _backward(tree, leaf_index, max_len):
 
 
 def _run_search(params, rng, *, root, recurrent_fn, selection_fn, num_simulations,
-                invalid_actions, extra_data):
+                max_depth, invalid_actions, extra_data):
     """mctx.search's simulation loop, using the faster `_backward` above."""
     batch = root.value.shape[0]
     batch_range = jnp.arange(batch)
     action_selection_fn = action_selection.switching_action_selection_wrapper(
         root_action_selection_fn=functools.partial(selection_fn, depth=0),
         interior_action_selection_fn=selection_fn)
-    backward = jax.vmap(functools.partial(_backward, max_len=num_simulations + 1))
+    backward = jax.vmap(functools.partial(_backward, max_len=max_depth + 1))
 
     def body(sim, carry):
         rng, tree = carry
         rng, simulate_key, expand_key = jax.random.split(rng, 3)
         parent, action = mctx_search.simulate(
-            jax.random.split(simulate_key, batch), tree, action_selection_fn, num_simulations)
+            jax.random.split(simulate_key, batch), tree, action_selection_fn, max_depth)
         nxt = tree.children_index[batch_range, parent, action]
         nxt = jnp.where(nxt == mctx.Tree.UNVISITED, sim + 1, nxt)
         tree = mctx_search.expand(params, expand_key, tree, recurrent_fn, parent, action, nxt)
@@ -265,12 +265,18 @@ class SearchOutput(NamedTuple):
     search_value: jax.Array    # [B] value of the root after search
 
 
-def make_search(forward, num_simulations: int, max_considered: int = 16):
+def make_search(forward, num_simulations: int, max_considered: int = 16, max_depth: int | None = None):
     """Returns search(params, rng, states, gumbel_scale) -> SearchOutput.
 
     `states` must be decision states (not afterstates). Use gumbel_scale=1.0
     for exploration in self-play and 0.0 for strongest play in evaluation.
+
+    `max_depth` caps how many edges (decision + chance, so 2 per move) one
+    simulation may descend. Batched tree walks run until the deepest walk in
+    the whole batch finishes, so one deep forcing line would otherwise stall
+    every game in the batch.
     """
+    max_depth = max_depth or num_simulations
     recurrent_fn = make_recurrent_fn(forward)
     qtransform = qtransforms.qtransform_completed_by_mix_value
     selection = _make_selection(num_simulations, max_considered, qtransform)
@@ -292,7 +298,7 @@ def make_search(forward, num_simulations: int, max_considered: int = 16):
         )
         tree = _run_search(
             params, rng, root=root, recurrent_fn=recurrent_fn, selection_fn=selection,
-            num_simulations=num_simulations,
+            num_simulations=num_simulations, max_depth=max_depth,
             invalid_actions=jnp.concatenate([invalid, jnp.ones((batch, C), bool)], -1),
             extra_data=action_selection.GumbelMuZeroExtraData(root_gumbel=gumbel),
         )

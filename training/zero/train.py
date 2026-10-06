@@ -59,6 +59,7 @@ class Config:
     unroll: int = 32               # moves per game per iteration
     simulations: int = 32
     max_considered: int = 16
+    max_depth: int = 16            # tree edges per simulation (2 per move: decision + chance)
     # learning
     batch: int = 1024
     lr: float = 3e-4
@@ -124,17 +125,20 @@ def make_train_step(forward, tx):
 
 
 class MetricAverager:
+    """Running means, counted per key (metrics arrive at different rates:
+    training metrics per SGD step, self-play metrics per iteration)."""
+
     def __init__(self):
-        self.sums, self.n = {}, 0
+        self.sums, self.counts = {}, {}
 
     def add(self, m):
         for k, v in m.items():
             self.sums[k] = self.sums.get(k, 0.0) + float(v)
-        self.n += 1
+            self.counts[k] = self.counts.get(k, 0) + 1
 
     def pop(self):
-        out = {k: v / max(self.n, 1) for k, v in self.sums.items()}
-        self.sums, self.n = {}, 0
+        out = {k: v / self.counts[k] for k, v in self.sums.items()}
+        self.sums, self.counts = {}, {}
         return out
 
 
@@ -243,8 +247,9 @@ def main(cfg: Config):
     opt_state = jax.device_put(opt_state, learner)
 
     train_step = make_train_step(forward, tx)
-    search = jax.jit(S.make_search(forward, cfg.simulations, cfg.max_considered))
-    selfplay = SP.make_selfplay(S.make_search(forward, cfg.simulations, cfg.max_considered), cfg.unroll)
+    make = lambda: S.make_search(forward, cfg.simulations, cfg.max_considered, cfg.max_depth)
+    search = jax.jit(make())
+    selfplay = SP.make_selfplay(make(), cfg.unroll)
     np_rng = np.random.default_rng(cfg.seed + start_iteration)
     key = jax.random.key(cfg.seed + start_iteration)
 
@@ -300,8 +305,10 @@ def main(cfg: Config):
             done = records['done'] & records['valid']
             games_done += int(done.sum())
             rew = records['reward'][done]
-            avg.add({'sp_decisive': float((rew != 0).mean()) if rew.size else 0.0,
-                     'sp_value_abs': float(np.abs(search_value).mean())})
+            if rew.size:
+                avg.add({'sp_decisive': float((rew != 0).mean()),
+                         'sp_game_plies': float(records['ply'][done].mean()) + 1})
+            avg.add({'sp_value_abs': float(np.abs(search_value).mean())})
 
             if it % 5 == 0:
                 dt = time.time() - t_last
