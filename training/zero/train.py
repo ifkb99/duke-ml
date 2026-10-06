@@ -236,11 +236,13 @@ def main(cfg: Config):
     start_iteration = 0
 
     latest = run_dir / 'latest.pkl'
-    if latest.exists():
-        _, params, ckpt = load_params(latest)
+    imitation_ckpt = run_dir / 'imitation.pkl'
+    resume_from = latest if latest.exists() else imitation_ckpt if imitation_ckpt.exists() else None
+    if resume_from:
+        _, params, ckpt = load_params(resume_from)
         opt_state = ckpt['opt_state']
         start_iteration = ckpt['iteration']
-        log(f'resumed from {latest} at iteration {start_iteration}')
+        log(f'resumed from {resume_from} at iteration {start_iteration}')
     else:
         (run_dir / 'config.json').write_text(json.dumps(asdict(cfg), indent=2))
     params = jax.device_put(params, learner)
@@ -258,7 +260,7 @@ def main(cfg: Config):
     avg = MetricAverager()
     try:
         # --- imitation warm-start (fresh runs only) ---
-        if start_iteration == 0 and cfg.imitation_games > 0:
+        if resume_from is None and cfg.imitation_games > 0:
             key, k = jax.random.split(key)
             replay = imitation_data(cfg, pool, k, log)
             for step in range(1, cfg.imitation_steps + 1):
