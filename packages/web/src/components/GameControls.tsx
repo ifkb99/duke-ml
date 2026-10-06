@@ -67,6 +67,7 @@ export function GameControls({
           <option value="hotseat">Hot Seat</option>
           <option value="vs-random">vs Random</option>
           <option value="vs-minimax">vs Minimax</option>
+          <option value="vs-zero">vs Neural Net</option>
         </select>
 
         {isVsAi && (

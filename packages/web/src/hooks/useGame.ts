@@ -262,9 +262,11 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
     aiThinking.current = true;
 
     const msg: AIWorkerRequest = {
-      type: mode === 'vs-random' ? 'pickRandomMove' : 'findBestMove',
+      type: mode === 'vs-random' ? 'pickRandomMove' : mode === 'vs-zero' ? 'zeroMove' : 'findBestMove',
       state: serialize(state),
       depth: mode === 'vs-minimax' ? 6 : undefined,
+      simulations: mode === 'vs-zero' ? 64 : undefined,
+      report: mode === 'vs-zero' && new URLSearchParams(location.search).has('report'),
     };
 
     const onMessage = (e: MessageEvent<AIWorkerResponse>) => {

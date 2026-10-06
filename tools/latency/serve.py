@@ -86,6 +86,8 @@ def lan_addresses():
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--port', type=int, default=8443)
+    p.add_argument('--dir', type=Path, default=HERE,
+                   help='directory to serve (default: the latency page), e.g. packages/web/dist')
     a = p.parse_args()
     if not CERT.exists():
         CERT.parent.mkdir(exist_ok=True)
@@ -94,7 +96,7 @@ def main():
                        check=True, capture_output=True)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(CERT, KEY)
-    server = http.server.ThreadingHTTPServer(('0.0.0.0', a.port), partial(Handler, directory=str(HERE)))
+    server = http.server.ThreadingHTTPServer(('0.0.0.0', a.port), partial(Handler, directory=str(a.dir.resolve())))
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
     for addr in lan_addresses():
         print(f'open https://{addr}:{a.port}/ on your phone')
