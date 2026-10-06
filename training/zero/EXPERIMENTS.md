@@ -57,3 +57,27 @@ Game outcomes as value targets are high-variance: one ±1 label per ~80
 positions, decided by blunders far in the future. That's tolerable with
 AlphaZero's data volume (each position seen ~once, millions of games), not
 with 12k games in the buffer seen 4× each.
+
+## az2: fixes for the az1 failure (started 2026-10-06)
+
+Changes from az1 (everything else the same):
+
+| setting | az1 | az2 | why |
+|---|---|---|---|
+| value target | final result | 10-step bootstrapped return (`value_nstep=10`) | far less noise per target |
+| sample reuse | 4 | 1 | az1 memorized its buffer |
+| replay buffer | 1M | 2M | more different games per window |
+| warm-start | 4,000 steps (~22 passes) | early-stopped on 10% held-out games | az1's warm-start value head was memorized |
+| replay at self-play start | kept the minimax samples | empty | minimax samples only have result targets |
+| games per GPU | 960 / 704 | 872 / 792 | less SGD on GPU 0 now |
+
+Warm-start data: reused `runs/az1/imitation_data.npz` (same 3,000 minimax games).
+
+New logging (`metrics.jsonl`): `fresh_*` value and policy stats on every
+iteration's new games before training on them, `ladder` matches against the
+network from 100 iterations earlier, `imitation` held-out curves, and `start`
+records with config and git commit.
+
+**What success looks like:** `fresh_value_corr_mc` rising well above az1's
+~0.05, `fresh_policy_kl` falling, ladder scores above 0.5, and then the minimax
+scores moving.

@@ -3,6 +3,12 @@
 Ideas and context collected while setting up the first run (`az1`, started
 2026-10-05). How to operate training is in [RUNNING.md](RUNNING.md).
 
+## Status
+
+**az1 failed to learn; az2 is the current run.** The diagnosis and the az2
+changes are in [EXPERIMENTS.md](EXPERIMENTS.md). The section below is az1's
+history as it was written at the time.
+
 ## Status of run `az1` (as of 2026-10-05, 22:30)
 
 Started 21:41. Restarted twice from checkpoints for speed fixes; stopped at

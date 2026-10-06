@@ -212,3 +212,43 @@ def _replay_of(samples):
     replay = RP.Replay(len(samples['z']))
     replay.add(samples)
     return replay
+
+
+def test_fresh_diagnostics(samples):
+    graphdef, params, _ = _tiny()
+    forward = make_forward(graphdef)
+    params = jax.tree.map(lambda x: x + 0.05 * jax.random.normal(jax.random.key(2), x.shape), params)
+    b = {k: v[:256] for k, v in samples.items()}
+    d = {k: float(v) for k, v in T.make_diagnostics(forward)(params, b).items()}
+    _, m = T.make_loss_fn(forward)(params, b)
+    np.testing.assert_allclose(d['fresh_policy_ce'], float(m['policy_loss']), rtol=1e-4)
+    assert d['fresh_policy_kl'] >= -1e-4
+    assert d['fresh_target_entropy'] >= 0 and d['fresh_prior_entropy'] >= 0
+    assert -1 <= d['fresh_value_corr_mc'] <= 1
+    # Without n-step targets the target is the game result itself.
+    np.testing.assert_allclose(d['fresh_value_mse'], d['fresh_value_mse_mc'], rtol=1e-5)
+    np.testing.assert_allclose(d['fresh_mc_baseline'], np.mean(b['z_mc'] ** 2), rtol=1e-5)
+
+
+def test_game_ids(samples):
+    gid = T.game_ids(samples)
+    assert gid[0] == 0 and (np.diff(gid) >= 0).all()
+    firsts = np.flatnonzero(np.diff(gid, prepend=-1))
+    assert (samples['ply'][firsts] == 0).all()
+
+
+def test_imitation_early_stopping(samples):
+    graphdef, params, tx = _tiny()
+    forward = make_forward(graphdef)
+    cfg = T.Config(batch=64, steps_per_call=4, imitation_steps=400, imitation_check_every=8,
+                   imitation_patience=2, imitation_holdout=0.3)
+    logged = []
+    log = lambda msg, **rec: logged.append(rec)
+    loss_fn = T.make_loss_fn(forward)
+    p, o = T.imitate(cfg, samples, params, tx.init(params), T.make_train_steps(forward, tx),
+                     jax.jit(lambda p, b: loss_fn(p, b)[1]), jax.devices()[0],
+                     np.random.default_rng(0), log)
+    checks = [r for r in logged if r.get('kind') == 'imitation']
+    assert checks and all('heldout_value_loss' in r for r in checks)
+    # Kept parameters are those of the best held-out check.
+    assert jax.tree.structure(p) == jax.tree.structure(params)
