@@ -148,3 +148,29 @@ Each has half of az2's hardware, so compare against az2 by **self-play games**
 or **GPU-hours** (az2 used 2 GPUs), not wall-clock. Planned comparisons: their
 minimax curves and ladders, and head-to-head matches between them and against
 az2 checkpoints (`diagnostics/ladder2.py`).
+
+### az3 result: bigger network wins (2026-10-06 17:38)
+
+At ~3.4 GPU-hours each (az3-net iteration 725, az3-sims iteration 400),
+head-to-head with **the same search for both (32 simulations)**, 256 games:
+
+| match | score |
+|---|---|
+| az3-sims vs az3-net | 0.37 |
+| az3-sims vs az2 iteration 400 (~2.8 GPU-hours) | 0.40 |
+| az3-net vs az2 iteration 400 | 0.53 |
+
+**Caveat found on the way:** a run's own training evals use its own search
+settings, so az3-sims played minimax with 64 simulations. Its better minimax
+curve (e.g. minimax 4 0.75 vs 0.60 per 100k games) partly measured extra
+thinking at play time, not a better network. The evaluator (evaluator.py) now
+rates every checkpoint at the same 32 simulations.
+
+Last training evals before stopping: az3-net iteration 850: minimax 2 0.91,
+minimax 4 0.84; az3-sims iteration 425 (at 64 simulations): minimax 2 0.95,
+minimax 4 0.91.
+
+**Decision:** stop az3-sims; continue az3-net (128 × 10) on both GPUs from
+iteration 850 (games 872 / 792, memory fraction 0.7 to leave room for the
+evaluator). Doubling simulations halves the games per hour, and at this stage
+more games beat better targets per game.
