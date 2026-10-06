@@ -174,3 +174,37 @@ minimax 4 0.91.
 iteration 850 (games 872 / 792, memory fraction 0.7 to leave room for the
 evaluator). Doubling simulations halves the games per hour, and at this stage
 more games beat better targets per game.
+
+## Phone network: spatial policy head (2026-10-06, branch web/phone-ai)
+
+The goal is to play in the browser on a phone (tools/latency: on the phone's
+CPU, a 128 × 10 network takes ~25 ms per position; on WebGPU, ~2–4 ms in
+batches). The download was the problem: the dense policy layer
+(1,280 → 3,605) is 4.6M of az3-net's 7.7M parameters, 15 MB as fp16.
+
+**Spatial head** (`--policy-head spatial`, network.py): each action's logit
+is read off the square it starts from, in rules.py's numbering. A 1 × 1 conv
+gives every square 36 move targets + 64 command (src, dst) logits, moves add a
+bilinear q(from)·k(to) term, and draw/placements come from the pooled board.
+It has ~21K parameters: a 128 × 10 network drops to 3.1M parameters, 6.2 MB as
+fp16, at the same speed.
+
+**Does it lose anything?** Distillation (`distill.py`): az3-net iteration 1075
+played 402,931 self-play positions (32 simulations, ~1,300 positions/s on half
+a GPU). Two students learned them with az3-net's trunk and value head copied
+in and only the policy head fresh, early-stopped on 340 held-out games:
+
+| held-out games | policy loss | top-1 vs search | value loss |
+|---|---|---|---|
+| teacher (az3-net, dense head, millions of samples) | 0.617 | 0.815 | 0.082 |
+| student, spatial head | **0.714** | 0.769 | 0.085 |
+| student, dense head (control) | 0.719 | 0.769 | 0.086 |
+
+Same data, same budget: the spatial head matches the dense one (and overfits
+a little less: train policy loss 0.545 vs 0.504 at step 2,048). Both students
+stop well short of the teacher because 360k positions are seen ~6 times
+before held-out loss turns up; the gap is data, not the head.
+
+**Next:** RL-train the spatial network from the distilled student
+(`runs/distill-spatial/imitation.pkl`, 128 × 10, az3-net's trunk), which
+continues where az3-net is instead of starting over.
