@@ -68,6 +68,7 @@ class Config:
     lr: float = 3e-4
     weight_decay: float = 1e-4
     sample_reuse: float = 4.0      # each new sample is trained on ~this many times
+    steps_per_call: int = 32       # SGD steps per jitted call (amortizes launch overhead)
     replay: int = 1_000_000
     min_replay: int = 50_000
     # imitation warm-start
@@ -125,6 +126,33 @@ def make_train_step(forward, tx):
         return optax.apply_updates(params, updates), opt_state, metrics
 
     return train_step
+
+
+def make_train_steps(forward, tx):
+    """Several SGD steps in ONE jitted call: train_steps(params, opt, batches).
+
+    `batches` has a leading [n_steps] axis. Launching a jitted function costs
+    ~12 ms of Python here (walking the big params/optimizer pytrees), which made
+    one-call-per-step training launch-bound; scanning over steps on the device
+    pays that once per call. Returns metrics averaged over the steps.
+    """
+    step = make_train_step(forward, tx)
+
+    @jax.jit
+    def train_steps(params, opt_state, batches):
+        def body(carry, batch):
+            params, opt_state, metrics = step(*carry, batch)
+            return (params, opt_state), metrics
+        (params, opt_state), metrics = jax.lax.scan(body, (params, opt_state), batches)
+        return params, opt_state, jax.tree.map(jnp.mean, metrics)
+
+    return train_steps
+
+
+def sample_stacked(replay, n_steps, batch, rng):
+    """n_steps minibatches from the replay buffer, stacked as [n_steps, batch, ...]."""
+    flat = replay.sample(n_steps * batch, rng)
+    return {k: v.reshape((n_steps, batch) + v.shape[1:]) for k, v in flat.items()}
 
 
 class MetricAverager:
@@ -274,7 +302,8 @@ def main(cfg: Config):
     params = jax.device_put(params, learner)
     opt_state = jax.device_put(opt_state, learner)
 
-    train_step = make_train_step(forward, tx)
+    train_steps_fn = make_train_steps(forward, tx)
+    chunk = cfg.steps_per_call
     make = lambda: S.make_search(forward, cfg.simulations, cfg.max_considered, cfg.max_depth)
     search = jax.jit(make())
     selfplay = SP.make_selfplay(make(), cfg.unroll)
@@ -289,11 +318,11 @@ def main(cfg: Config):
         if resume_from is None and cfg.imitation_games > 0:
             key, k = jax.random.split(key)
             replay = imitation_data(cfg, pool, k, log, run_dir / 'imitation_data.npz')
-            for step in range(1, cfg.imitation_steps + 1):
-                batch = jax.device_put(replay.sample(cfg.batch, np_rng), learner)
-                params, opt_state, m = train_step(params, opt_state, batch)
+            for step in range(chunk, cfg.imitation_steps + 1, chunk):
+                batches = jax.device_put(sample_stacked(replay, chunk, cfg.batch, np_rng), learner)
+                params, opt_state, m = train_steps_fn(params, opt_state, batches)
                 avg.add(m)
-                if step % 500 == 0:
+                if step % (chunk * 16) == 0:
                     log(f'imitation step {step}: ' + ' '.join(f'{k}={v:.3f}' for k, v in avg.pop().items()))
             key, k = jax.random.split(key)
             results = evaluate(cfg, search, params, pool, k)
@@ -318,31 +347,16 @@ def main(cfg: Config):
         total_games = sum(n for _, n in actors)
         assembler = RP.Assembler(total_games)
         new_per_iter = total_games * cfg.unroll
-        train_steps = max(1, round(cfg.sample_reuse * new_per_iter / cfg.batch))
+        calls = max(1, round(cfg.sample_reuse * new_per_iter / cfg.batch / chunk))
         games_done, t_last = 0, time.time()
 
-        for it in range(start_iteration + 1, cfg.iterations + 1):
-            pending = []
-            for i in range(len(actors)):                               # async, one per GPU
-                key, k = jax.random.split(key)
-                sp_states[i], rec = selfplay(sp_params[i], sp_states[i], k)
-                pending.append(rec)
-
-            if replay.size >= cfg.min_replay:                          # overlaps with self-play
-                for _ in range(train_steps):
-                    batch = jax.device_put(replay.sample(cfg.batch, np_rng), learner)
-                    params, opt_state, m = train_step(params, opt_state, batch)
-                    avg.add(m)
-
-            parts = jax.device_get(pending)                            # waits for self-play
-            records = {k: np.concatenate([p[k] for p in parts], axis=1) for k in parts[0]}
+        def ingest(records):
+            """Host bookkeeping for one iteration's self-play records."""
+            nonlocal games_done
             search_value = records.pop('search_value')
             samples = assembler.add(records)
             if samples is not None:
                 replay.add(samples)
-            sp_params = [jax.device_put(params, dev) for dev, _ in actors]
-
-            # Self-play statistics for this iteration.
             done = records['done'] & records['valid']
             games_done += int(done.sum())
             rew = records['reward'][done]
@@ -350,6 +364,41 @@ def main(cfg: Config):
                 avg.add({'sp_decisive': float((rew != 0).mean()),
                          'sp_game_plies': float(records['ply'][done].mean()) + 1})
             avg.add({'sp_value_abs': float(np.abs(search_value).mean())})
+
+        previous = None
+        for it in range(start_iteration + 1, cfg.iterations + 1):
+            t_iter = time.time()
+            # Everything below up to device_get overlaps with the GPUs:
+            # 1. launch self-play on every GPU (asynchronous),
+            pending = []
+            for i in range(len(actors)):
+                key, k = jax.random.split(key)
+                sp_states[i], rec = selfplay(sp_params[i], sp_states[i], k)
+                pending.append(rec)
+            # 2. queue SGD on the learner GPU, a chunk of steps per call,
+            if replay.size >= cfg.min_replay:
+                for _ in range(calls):
+                    batches = jax.device_put(sample_stacked(replay, chunk, cfg.batch, np_rng), learner)
+                    params, opt_state, m = train_steps_fn(params, opt_state, batches)
+                    avg.add(m)
+            # 3. and meanwhile file the previous iteration's games.
+            if previous is not None:
+                ingest(previous)
+
+            # Wait for self-play, noting when each GPU finished (seconds since
+            # this iteration's launch): shows which GPU is the bottleneck.
+            t_wait = time.time()
+            finished = [None] * len(pending)
+            while any(f is None for f in finished):
+                for i, rec in enumerate(pending):
+                    if finished[i] is None and all(x.is_ready() for x in jax.tree.leaves(rec)):
+                        finished[i] = time.time() - t_iter
+                time.sleep(0.02)
+            avg.add({'wait_s': time.time() - t_wait,
+                     **{f'sp_gpu{dev.id}_s': f for (dev, _), f in zip(actors, finished)}})
+            parts = jax.device_get(pending)
+            previous = {k: np.concatenate([p[k] for p in parts], axis=1) for k in parts[0]}
+            sp_params = [jax.device_put(params, dev) for dev, _ in actors]
 
             if it % 5 == 0:
                 dt = time.time() - t_last

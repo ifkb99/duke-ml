@@ -184,3 +184,25 @@ def test_checkpoint_round_trip(tmp_path, samples):
         np.testing.assert_allclose(float(a_m[k]), float(b_m[k]), rtol=1e-6)
     for x, y in zip(jax.tree.leaves((a_params, a_opt)), jax.tree.leaves((b_params, b_opt))):
         np.testing.assert_allclose(np.asarray(x), np.asarray(y), rtol=1e-6, atol=1e-7)
+
+
+def test_scanned_train_steps_match_sequential(samples):
+    """make_train_steps (several steps in one call) == the same steps one by one."""
+    graphdef, params, tx = _tiny()
+    forward = make_forward(graphdef)
+    one, many = T.make_train_step(forward, tx), T.make_train_steps(forward, tx)
+    batches = T.sample_stacked(_replay_of(samples), 3, 64, np.random.default_rng(0))
+    p1, o1, losses = params, tx.init(params), []
+    for i in range(3):
+        p1, o1, m = one(p1, o1, {k: v[i] for k, v in batches.items()})
+        losses.append(float(m['policy_loss']))
+    p3, o3, m3 = many(params, tx.init(params), batches)
+    for x, y in zip(jax.tree.leaves(p1), jax.tree.leaves(p3)):
+        np.testing.assert_allclose(np.asarray(x), np.asarray(y), rtol=1e-5, atol=1e-6)
+    assert np.isclose(float(m3['policy_loss']), np.mean(losses), rtol=1e-5)
+
+
+def _replay_of(samples):
+    replay = RP.Replay(len(samples['z']))
+    replay.add(samples)
+    return replay
