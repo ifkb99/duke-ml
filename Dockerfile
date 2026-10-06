@@ -8,7 +8,11 @@ COPY packages/harness/package.json packages/harness/
 RUN npm ci
 COPY . .
 RUN npm run build
+# Precompressed copies for nginx's gzip_static (the WebAssembly runtime is 28 MB).
+RUN find packages/web/dist -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.css' -o -name '*.html' \
+      -o -name '*.wasm' -o -name '*.svg' -o -name '*.json' \) -exec gzip -9 -k {} +
 
 FROM nginx:alpine
+COPY packages/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/packages/web/dist /usr/share/nginx/html
 EXPOSE 80

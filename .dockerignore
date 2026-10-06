@@ -1,3 +1,11 @@
 node_modules
 dist
 .git
+# Python side: training runs, checkpoints and the virtualenv are gigabytes
+# and not needed to build the web app.
+.venv
+runs
+checkpoints
+training
+lessons
+tools
