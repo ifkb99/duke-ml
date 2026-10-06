@@ -187,17 +187,23 @@ def test_checkpoint_round_trip(tmp_path, samples):
 
 
 def test_scanned_train_steps_match_sequential(samples):
-    """make_train_steps (several steps in one call) == the same steps one by one."""
-    graphdef, params, tx = _tiny()
-    forward = make_forward(graphdef)
-    one, many = T.make_train_step(forward, tx), T.make_train_steps(forward, tx)
-    batches = T.sample_stacked(_replay_of(samples), 3, 64, np.random.default_rng(0))
-    p1, o1, losses = params, tx.init(params), []
-    for i in range(3):
-        p1, o1, m = one(p1, o1, {k: v[i] for k, v in batches.items()})
-        losses.append(float(m['policy_loss']))
-    p3, o3, m3 = many(params, tx.init(params), batches)
+    """make_train_steps (several steps in one call) == the same steps one by one.
+
+    Runs on CPU: GPU reductions are nondeterministic in the last bits, and
+    Adam's division by sqrt(v) amplifies that for near-zero gradients."""
+    with jax.default_device(jax.devices('cpu')[0]):
+        graphdef, params, tx = _tiny()
+        forward = make_forward(graphdef)
+        one, many = T.make_train_step(forward, tx), T.make_train_steps(forward, tx)
+        batches = T.sample_stacked(_replay_of(samples), 3, 64, np.random.default_rng(0))
+        batches = jax.device_put(batches)
+        p1, o1, losses = params, tx.init(params), []
+        for i in range(3):
+            p1, o1, m = one(p1, o1, {k: v[i] for k, v in batches.items()})
+            losses.append(float(m['policy_loss']))
+        p3, o3, m3 = many(params, tx.init(params), batches)
     for x, y in zip(jax.tree.leaves(p1), jax.tree.leaves(p3)):
+        assert x.devices() == {jax.devices('cpu')[0]}
         np.testing.assert_allclose(np.asarray(x), np.asarray(y), rtol=1e-5, atol=1e-6)
     assert np.isclose(float(m3['policy_loss']), np.mean(losses), rtol=1e-5)
 
