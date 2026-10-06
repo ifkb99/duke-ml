@@ -107,3 +107,44 @@ policy loss 1.041, about 8 passes over the data).
 az1 scored 0.49 between iterations 2200 and 200. In 20 minutes az2 passed
 everything az1 reached in 10.5 hours (best az1 scores: minimax 2 0.56,
 minimax 4 0.14).
+
+### az2 result (stopped 2026-10-06 13:37 at iteration 1100, ~3.6 h of self-play, both GPUs)
+
+Evaluations averaged per 100 iterations (4 evals × 64 games each; minimax 6 is
+one 64-game eval every 100 iterations from iteration 700):
+
+| iterations | minimax 2 | minimax 4 | minimax 6 |
+|---|---|---|---|
+| 1–100 | 0.82 | 0.37 | |
+| 201–300 | 0.87 | 0.60 | |
+| 401–500 | 0.88 | 0.77 | |
+| 601–700 | 0.91 | 0.76 | 0.59 (32 games at 600 offline: 0.59) |
+| 801–900 | 0.94 | 0.85 | 0.65 |
+| 901–1000 | 0.93 | 0.87 | 0.77 |
+| 1001–1100 | 0.93 | 0.90 | 0.73 |
+
+Ladder (64 games, vs 100 iterations earlier): 0.94, 0.74, 0.61, 0.73, 0.58,
+0.57, 0.52 (700 vs 625), 0.57, 0.54, 0.32 (1000 vs 900).
+Bigger checks, 256 games: 1000 vs 800 **0.52**, 1000 vs 600 **0.73**.
+So the 0.32 was noise, but self-improvement had slowed to ~nothing per 200
+iterations by iteration 1000, while the minimax scores still crept up.
+
+Health at the end: fresh value corr 0.41 (from 0.21 at iteration 100, flat
+since ~500), policy/search agreement 0.81 (flat since 300), games 88 plies,
+89% decisive (from 56 plies, 96%).
+
+## az3: bigger network vs more simulations (started 2026-10-06 13:38)
+
+Two runs side by side, **one GPU each**, both from az2's code and settings
+(policy-only warm-start on the same minimax games, n-step 10, reuse 1), each
+changing one thing:
+
+| run | GPU | change | games in parallel |
+|---|---|---|---|
+| az3-net | 0 | network 128 channels × 10 blocks (az2: 96 × 6) | 872 |
+| az3-sims | 1 | 64 simulations per move (az2: 32), max depth 24 | 768 (search trees take 2× memory) |
+
+Each has half of az2's hardware, so compare against az2 by **self-play games**
+or **GPU-hours** (az2 used 2 GPUs), not wall-clock. Planned comparisons: their
+minimax curves and ladders, and head-to-head matches between them and against
+az2 checkpoints (`diagnostics/ladder2.py`).
