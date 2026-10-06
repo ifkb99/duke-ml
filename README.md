@@ -42,6 +42,8 @@ kill -- -$(cat runs/az1/pid)                  # stop
 
 Runs live in `runs/<name>/`: `train.log`, `metrics.jsonl` (one JSON line per
 log/eval), `latest.pkl` (resume point), and periodic `ckpt_*.pkl`.
+See **[training/zero/RUNNING.md](training/zero/RUNNING.md)** for starting,
+stopping, resuming, settings and troubleshooting.
 
 **Learning how it works:** `lessons/` walks through the code in six short
 lessons with exercises and tests. See `lessons/README.md`.
