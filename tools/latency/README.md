@@ -24,10 +24,11 @@ outputs against JAX's on 8 real positions (`correct` column).
 
 Raw JSON per device is in `results/`.
 
-**2026-10-06, Android 10 phone, Chrome 154, 7 CPU threads (full sweep)**
-([json](results/2026-10-06-android10-chrome154.json)). The WebGPU rows all
-failed, and the error wasn't recorded then. The page now saves failures in the
-copied JSON, and the **GPU only** button reruns just that part.
+**2026-10-06, Android 10 phone, Chrome 154, 7 CPU threads.** CPU: full sweep
+([json](results/2026-10-06-android10-chrome154.json)). Its WebGPU runs failed
+with "dilations should be 2D" (fixed in the exporter), so the GPU numbers come
+from a separate GPU-only sweep
+([json](results/2026-10-06T22-14-06-android10-chrome154.json)).
 
 | network | MFLOP/eval | ms/eval (CPU, any format) | sims in 3 s | fp16 MB |
 |---|---|---|---|---|
@@ -45,3 +46,22 @@ copied JSON, and the **GPU only** button reruns just that part.
   default (half the size of fp32, value error < 4e-4).
 - **Download size is mostly the dense policy layer** (4.6M of az3-net's 7.7M
   parameters). A structured policy head would roughly halve the download.
+
+**GPU (WebGPU, fp16), same phone:**
+
+| network | batch 1 | batch 8 | batch 32 | batch 128 | sims in 3 s (batch 8 / 32) |
+|---|---|---|---|---|---|
+| 64×4 (random) | 22.5 ms | 2.9 ms/eval | 0.87 | 0.50 | ~1,000 / 3,400 |
+| az2 96×6 | 21.4 ms | 3.0 ms/eval | 1.15 | 0.82 | ~1,000 / 2,600 |
+| az3-net 128×10 | 27.0 ms | 3.6 ms/eval | 2.1 | 1.6 | ~840 / 1,400 |
+| 192×12 (random) | 32.2 ms | 5.6 ms/eval | 4.1 | 3.4 | ~530 / 740 |
+
+- **Every call to the GPU costs about 20–25 ms**, however small the batch.
+  At batch 1 the GPU is no faster than the CPU, but batch 8 costs about the
+  same as batch 1. Batched, the GPU is 7–15× faster than the CPU
+  (az3-net: 24.5 ms/eval on the CPU vs 3.6 at batch 8 and 2.1 at batch 32).
+- **So the in-browser search must evaluate positions in batches.** Gumbel search
+  does this naturally: each round of sequential halving runs one simulation
+  per candidate move, and those simulations are independent.
+- fp16 beats fp32 on the GPU too (az3-net batch 32: 68 vs 84 ms).
+- Models load in under a second (over the LAN).
