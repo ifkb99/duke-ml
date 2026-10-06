@@ -57,9 +57,10 @@ class Config:
     channels: int = 96
     blocks: int = 6
     # self-play
-    games: int = 1024              # parallel self-play games on the actor GPU
-    learner_games: int = 640       # more self-play games on the learner GPU, which
-                                   # would otherwise idle between SGD steps (0 = off)
+    games: int = 960               # parallel self-play games on the actor GPU
+    learner_games: int = 704       # more self-play games on the learner GPU, which
+                                   # would otherwise idle between SGD steps (0 = off);
+                                   # balanced so both GPUs finish together (sp_gpu*_s)
     unroll: int = 32               # moves per game per iteration
     simulations: int = 32
     max_considered: int = 16

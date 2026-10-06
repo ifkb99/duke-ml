@@ -116,7 +116,7 @@ The ones you're most likely to want:
 |---|---|---|
 | `--simulations` | 32 | search effort per move (stronger, but slower self-play) |
 | `--channels`, `--blocks` | 96, 6 | network size (new runs only) |
-| `--games`, `--learner-games` | 1024, 512 | parallel self-play games on GPU 1 and GPU 0 |
+| `--games`, `--learner-games` | 960, 704 | parallel self-play games on GPU 1 and GPU 0 |
 | `--eval-every` | 25 | iterations between evaluations and checkpoints |
 | `--eval-depths` | 2 4 | minimax depths to evaluate against (add 6 once 4 is easy) |
 | `--imitation-games` | 3000 | warm-start games (0 = pure self-play from scratch) |
