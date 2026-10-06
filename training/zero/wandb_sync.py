@@ -14,7 +14,7 @@ in runs/<run>/.wandb_offset (bytes of metrics.jsonl already uploaded), so
 rerunning never uploads a line twice. Delete that file (and the W&B run) to
 upload a run from scratch.
 
-X axes: `iteration`, `games` (self-play games so far), `hours` (time spent
+X axes: `iteration`, `games` (self-play games so far, summed over restarts), `hours` (time spent
 training, excluding gaps such as stops and reboots) and `gpu_hours` (hours ×
 GPUs used, the fair axis for comparing runs on different hardware).
 """
@@ -55,7 +55,12 @@ def convert(rec, state):
         return {'events/start': 1, 'iteration': rec.get('iteration', 0)}
     out = state['clock'].tick(rec['time'])
     if kind == 'train':
-        state['games'] = rec.get('games', state['games'])
+        # train.py counts games from 0 after every (re)start: carry the total.
+        raw = rec.get('games', 0)
+        if raw < state['raw_games']:
+            state['games_base'] = state['games']
+        state['raw_games'] = raw
+        state['games'] = state['games_base'] + raw
         out.update({k: v for k, v in rec.items()
                     if isinstance(v, (int, float)) and k not in ('time', 'iteration', 'games')})
         out['iteration'], out['games'] = rec['iteration'], state['games']
@@ -84,14 +89,14 @@ def run_config(run_dir: Path):
     return (json.loads(cfg.read_text()) if cfg.exists() else {}), None
 
 
-def sync(run: str, follow: bool, gpus: int, poll: float):
+def sync(run: str, follow: bool, gpus: int, poll: float, run_id: str | None = None):
     run_dir = RUNS / run
     metrics = run_dir / 'metrics.jsonl'
     offset_file = run_dir / '.wandb_offset'
     offset = int(offset_file.read_text()) if offset_file.exists() else 0
     config, commit = run_config(run_dir)
 
-    wb = wandb.init(project=PROJECT, name=run, id=run.replace('/', '-'), resume='allow',
+    wb = wandb.init(project=PROJECT, name=run, id=run_id or run.replace('/', '-'), resume='allow',
                     config={**config, 'gpus': gpus, 'commit': commit}, dir=run_dir)
     wb.define_metric('iteration')
     wb.define_metric('imitation/step')
@@ -103,7 +108,7 @@ def sync(run: str, follow: bool, gpus: int, poll: float):
 
     # Replay everything before `offset` without uploading, to rebuild the
     # running clock and game count.
-    state = {'clock': Clock(gpus), 'games': 0, 'gpus': gpus}
+    state = {'clock': Clock(gpus), 'games': 0, 'games_base': 0, 'raw_games': 0, 'gpus': gpus}
     with metrics.open('rb') as f:
         for line in f.read(offset).splitlines():
             if line.strip():
@@ -141,8 +146,10 @@ def main():
     p.add_argument('--gpus', type=int, default=None,
                    help='GPUs the run used (default: from its start records, else 2)')
     p.add_argument('--poll', type=float, default=60.0, help='seconds between checks with --follow')
+    p.add_argument('--id', default=None,
+                   help='W&B run id (default: the run name; W&B never reuses a deleted id)')
     a = p.parse_args()
-    sync(a.run, a.follow, a.gpus or 2, a.poll)
+    sync(a.run, a.follow, a.gpus or 2, a.poll, a.id)
 
 
 if __name__ == '__main__':
