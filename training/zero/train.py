@@ -28,6 +28,7 @@ import argparse
 import json
 import pickle
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -57,7 +58,7 @@ class Config:
     blocks: int = 6
     # self-play
     games: int = 1024              # parallel self-play games on the actor GPU
-    learner_games: int = 512       # more self-play games on the learner GPU, which
+    learner_games: int = 640       # more self-play games on the learner GPU, which
                                    # would otherwise idle between SGD steps (0 = off)
     unroll: int = 32               # moves per game per iteration
     simulations: int = 32
@@ -365,16 +366,26 @@ def main(cfg: Config):
                          'sp_game_plies': float(records['ply'][done].mean()) + 1})
             avg.add({'sp_value_abs': float(np.abs(search_value).mean())})
 
+        # One thread per self-play GPU. The search's while_loops have
+        # data-dependent exit conditions, which XLA:GPU evaluates on the host,
+        # so launching self-play keeps the calling thread busy until it's done.
+        # From a single thread the GPUs therefore took turns (23.7 s/iteration);
+        # one thread each lets them run concurrently (13.6 s).
+        sp_threads = ThreadPoolExecutor(len(actors), thread_name_prefix='selfplay')
+
+        def run_selfplay(i, k, t0):
+            new_states, rec = jax.block_until_ready(selfplay(sp_params[i], sp_states[i], k))
+            return new_states, rec, time.time() - t0
+
         previous = None
         for it in range(start_iteration + 1, cfg.iterations + 1):
             t_iter = time.time()
-            # Everything below up to device_get overlaps with the GPUs:
-            # 1. launch self-play on every GPU (asynchronous),
-            pending = []
+            # Everything below up to collecting the futures overlaps with the GPUs:
+            # 1. self-play on every GPU, each from its own thread,
+            futures = []
             for i in range(len(actors)):
                 key, k = jax.random.split(key)
-                sp_states[i], rec = selfplay(sp_params[i], sp_states[i], k)
-                pending.append(rec)
+                futures.append(sp_threads.submit(run_selfplay, i, k, t_iter))
             # 2. queue SGD on the learner GPU, a chunk of steps per call,
             if replay.size >= cfg.min_replay:
                 for _ in range(calls):
@@ -385,18 +396,15 @@ def main(cfg: Config):
             if previous is not None:
                 ingest(previous)
 
-            # Wait for self-play, noting when each GPU finished (seconds since
-            # this iteration's launch): shows which GPU is the bottleneck.
+            # Collect self-play; note when each GPU finished (seconds since this
+            # iteration started) to show which one is the bottleneck.
             t_wait = time.time()
-            finished = [None] * len(pending)
-            while any(f is None for f in finished):
-                for i, rec in enumerate(pending):
-                    if finished[i] is None and all(x.is_ready() for x in jax.tree.leaves(rec)):
-                        finished[i] = time.time() - t_iter
-                time.sleep(0.02)
+            results = [f.result() for f in futures]
+            for i, (new_states, _, _) in enumerate(results):
+                sp_states[i] = new_states
             avg.add({'wait_s': time.time() - t_wait,
-                     **{f'sp_gpu{dev.id}_s': f for (dev, _), f in zip(actors, finished)}})
-            parts = jax.device_get(pending)
+                     **{f'sp_gpu{dev.id}_s': r[2] for (dev, _), r in zip(actors, results)}})
+            parts = jax.device_get([r[1] for r in results])
             previous = {k: np.concatenate([p[k] for p in parts], axis=1) for k in parts[0]}
             sp_params = [jax.device_put(params, dev) for dev, _ in actors]
 
@@ -419,6 +427,8 @@ def main(cfg: Config):
                     save_checkpoint(run_dir / f'ckpt_{it:06d}.pkl', params, opt_state, it, cfg)
                 t_last = time.time()
     finally:
+        if 'sp_threads' in locals():
+            sp_threads.shutdown(wait=False, cancel_futures=True)
         pool.close()
         metrics_file.close()
 
