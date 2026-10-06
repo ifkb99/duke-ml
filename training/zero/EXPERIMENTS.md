@@ -208,3 +208,52 @@ before held-out loss turns up; the gap is data, not the head.
 **Next:** RL-train the spatial network from the distilled student
 (`runs/distill-spatial/imitation.pkl`, 128 × 10, az3-net's trunk), which
 continues where az3-net is instead of starting over.
+
+## Network review before more training (2026-10-06 19:30)
+
+`diagnostics/review.py` on the depth-8 benchmark (2,100 positions) and on each
+network's own self-play (256 games). Training stopped at az3-net iteration 1150.
+
+**The benchmark's accuracy/blunder numbers are biased toward drawing.**
+Minimax's evaluation counts each board tile at full material value but the bag
+only as 2 × its *average* tile value, so a draw gains a tile of material for
+free. Where drawing is legal it beats the best board move by a median 3.8
+points; in 54% of those positions not drawing counts as a "blunder", and 62% of
+the "puzzles" are "draw". Minimax's best move is a draw in 46% of positions;
+the networks draw ~25% of the time (and beat minimax 4 in 84% of games). So
+acc/blunder/puzzle mostly measure agreement with that heuristic. The forced
+outcomes don't depend on it:
+
+| | az2 1000 | az3-net 1000 | az3-net 1150 | spatial student | dense student |
+|---|---|---|---|---|---|
+| missed forced win: policy | 0.62 | 0.66 | 0.63 | 0.68 | 0.68 |
+| missed forced win: search 32 | 0.46 | 0.49 | **0.45** | 0.48 | 0.46 |
+| missed forced win: search 128 | 0.39 | 0.39 | **0.35** | 0.39 | 0.43 |
+| walked into a forced loss: search 32 | 0.8% | 0.7% | 0.7% | 0.7% | 1.0% |
+| acc when minimax's best is a board move: search 128 | 0.70 | 0.68 | 0.69 | 0.68 | 0.68 |
+| value: mean in forced-win positions | 0.55 | 0.56 | 0.57 | 0.59 | 0.60 |
+| value vs outcome, own self-play (corr) | 0.41 | 0.35 | 0.43 | 0.38 | 0.41 |
+| ... opening / middle / late / endgame | .21/.32/.58/.80 | .18/.30/.50/.70 | .20/.39/.57/.84 | .16/.34/.53/.75 | .20/.35/.56/.74 |
+| calibration error | 0.040 | 0.017 | 0.057 | 0.015 | 0.019 |
+
+(65 positions have a forced win, 1,522 a decisive minimax score.)
+
+Findings:
+- **Tactics are the clear weakness.** The raw policy misses ~2/3 of forced
+  wins; search finds them (32 → 128 simulations: 0.45 → 0.35 missed). The
+  value head doesn't recognise won positions (mean 0.57 where a forced win
+  exists), so wins are found only when the search reaches the end.
+- **More simulations at play time help directly**, which suits the phone
+  (WebGPU fits ~800–1,400 per 3 s).
+- **Search at 32 simulations barely beats the raw policy** on move choice
+  (az3-net 1150: 0.581 vs 0.582 acc): with 16 root candidates most get 1–2
+  visits, so the result is mostly prior + one-step values.
+- The value head predicts outcomes poorly early (corr 0.2 in the opening),
+  which is partly inherent (long, chancy games).
+- az3-net 1000 → 1150 improved on every robust metric (and the ladder: 0.62).
+- The distilled students sit at az3-net ~1000–1100 level: a fine start for
+  RL with the spatial head.
+- Policy probability on illegal moves (before masking) is ~99% for every
+  network: the loss masks them, so they're never trained. Harmless (search
+  masks too), and not a measure of rule knowledge.
+- Commands are almost never best (0.3%) or played (0.1%).
