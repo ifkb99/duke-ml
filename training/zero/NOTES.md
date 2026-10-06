@@ -81,6 +81,14 @@ segfault logged since boot was on it, and none happened with it excluded.
 Microcode before the update: **0x11d** (older than Intel's 0x129+ fixes for the
 13th/14th-gen voltage/degradation problem).
 
+**Result (2026-10-05, 23:07):** BIOS 3202 (dated 2026-05-07), microcode
+**0x133**, power limits PL1 = PL2 = 253 W (Intel's "Performance" profile). The
+full test suite on all cores: 3 of 3 runs with no segfaults (before the update:
+3 of 3 crashed). So the instability was most likely voltage-related rather
+than permanent damage. Training stays pinned off core 20 anyway, since it's
+GPU-bound and two more CPU threads gain nothing. If segfaults show up on CPU
+10/11 again, the core is degrading after all: consider a warranty replacement.
+
 **Before** updating:
 
 ```bash
