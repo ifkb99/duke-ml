@@ -135,12 +135,14 @@ class MetricAverager:
         self.sums, self.counts = {}, {}
 
     def add(self, m):
+        # No float() here: values may be device arrays, and converting forces
+        # a GPU sync after every train step. Summing stays on the device.
         for k, v in m.items():
-            self.sums[k] = self.sums.get(k, 0.0) + float(v)
+            self.sums[k] = self.sums.get(k, 0.0) + v
             self.counts[k] = self.counts.get(k, 0) + 1
 
     def pop(self):
-        out = {k: v / self.counts[k] for k, v in self.sums.items()}
+        out = {k: float(v) / self.counts[k] for k, v in self.sums.items()}
         self.sums, self.counts = {}, {}
         return out
 
@@ -258,9 +260,14 @@ def main(cfg: Config):
     imitation_ckpt = run_dir / 'imitation.pkl'
     resume_from = latest if latest.exists() else imitation_ckpt if imitation_ckpt.exists() else None
     if resume_from:
-        _, params, ckpt = load_params(resume_from)
+        # The checkpoint defines the network shape, whatever the flags say.
+        graphdef, params, ckpt = load_params(resume_from)
+        forward = make_forward(graphdef)
         opt_state = ckpt['opt_state']
         start_iteration = ckpt['iteration']
+        shape = (ckpt['config']['channels'], ckpt['config']['blocks'])
+        if shape != (cfg.channels, cfg.blocks):
+            log(f'note: using the checkpoint network {shape}, not --channels/--blocks')
         log(f'resumed from {resume_from} at iteration {start_iteration}')
     else:
         (run_dir / 'config.json').write_text(json.dumps(asdict(cfg), indent=2))
