@@ -30,9 +30,9 @@ def ts_oracle(requests: list[dict]) -> list[dict]:
 class TsOracle:
     """A persistent ts_oracle.ts process for many small queries."""
 
-    def __init__(self):
+    def __init__(self, script='training/zero/tests/ts_oracle.ts'):
         self.proc = subprocess.Popen(
-            ['npx', 'tsx', 'training/zero/tests/ts_oracle.ts'], cwd=REPO, text=True, bufsize=1,
+            ['npx', 'tsx', script], cwd=REPO, text=True, bufsize=1,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
     def ask(self, request: dict) -> dict:

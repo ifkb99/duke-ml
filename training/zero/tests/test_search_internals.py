@@ -188,7 +188,18 @@ def _reference_selection(num_simulations, max_considered):
         return jax.lax.cond(depth == 0, lambda: root(key, tree, node_index),
                             lambda: interior(key, tree, node_index, depth))
 
-    return _make_stochastic_action_selection_fn(decision, A)
+    stock = _make_stochastic_action_selection_fn(decision, A)
+
+    def select(key, tree, node_index, depth):
+        # Stock mctx breaks exact chance ties (equal bag counts) by the float
+        # rounding of softmax(log p); search.py takes the lowest outcome.
+        visits = tree.children_visits[node_index, A:]
+        score = jax.nn.softmax(tree.children_prior_logits[node_index, A:]) / (visits + 1)
+        chance = (jnp.argmax(score >= jnp.max(score) - 1e-6) + A).astype(jnp.int32)
+        return jnp.where(tree.embeddings.is_decision_node[node_index],
+                         stock(key, tree, node_index, depth), chance)
+
+    return select
 
 
 @pytest.mark.parametrize('num_simulations,max_considered', [(16, 16), (32, 4), (32, 16)])

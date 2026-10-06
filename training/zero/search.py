@@ -168,7 +168,10 @@ def _make_selection(num_simulations, max_considered, qtransform):
         def chance():
             visits = tree.children_visits[node_index, A:]
             probs = jax.nn.softmax(tree.children_prior_logits[node_index, A:])
-            return (jnp.argmax(probs / (visits + 1)) + A).astype(jnp.int32)
+            score = probs / (visits + 1)
+            # Exact ties are common (equal bag counts) and float rounding of
+            # softmax(log p) would break them at random: take the lowest outcome.
+            return (jnp.argmax(score >= jnp.max(score) - 1e-6) + A).astype(jnp.int32)
 
         return jax.lax.cond(is_decision, decision, chance)
 
