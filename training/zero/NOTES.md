@@ -3,6 +3,77 @@
 Ideas and context collected while setting up the first run (`az1`, started
 2026-10-05). How to operate training is in [RUNNING.md](RUNNING.md).
 
+## Status of run `az1` (as of 2026-10-05, 22:30)
+
+Started 21:41. Restarted twice from checkpoints for speed fixes; stopped at
+~iteration 80 for the BIOS update. Resume with `training/zero/run.sh az1`.
+
+| point | random | minimax 2 | minimax 4 |
+|---|---|---|---|
+| after imitation warm-start | 0.92 | 0.47 | 0.06 |
+| iteration 25 | 0.95 | 0.56 | 0.12 |
+| iteration 50 | 0.97 | 0.48 | 0.03 |
+| iteration 75 | 0.92 | 0.53 | 0.06 |
+
+Flat so far, but within noise (see "Evaluation noise" below), and only about
+45k self-play games in. **What to watch:** if minimax 4 hasn't moved by
+roughly iteration 600 (about 3 hours of self-play), dig into why: check that the
+search targets actually beat the raw policy, the learning rate, and replay staleness.
+
+Speed: ~3,900 searched moves/s (≈14M moves, ~300k games per hour) after
+running each GPU's self-play in its own thread. GPU 1 takes ~13.6 s per
+iteration, GPU 0 ~11-12 s (self-play + SGD); there's room to move ~10% more
+games onto GPU 0.
+
+## Draws and "the jackpot ticking down"
+
+About 6-10% of self-play games hit the 200-turn limit (a rule we added; the
+real game has none). Diagnosis at iteration 75 (256 games, 15 timeouts): most
+timeouts are **near-empty boards** (0-2 tiles per side besides the Dukes) with a
+small material gap (median 2 tiles); only 27% had a lead of 3+ tiles. So they're
+mostly genuinely drawish endgames, with a little dithering-while-winning.
+
+- **A flat per-turn penalty doesn't do much here.** The setup is zero-sum
+  (one value, sign flipped every turn), so a cost both players pay mostly
+  cancels out.
+- **A discount does:** a win n moves away is worth γⁿ (e.g. γ = 0.997: in 10
+  moves 0.97, in 100 moves 0.74). The value head learns that slope, so moves
+  that bring a win closer visibly raise the value and the search follows it.
+  The winner hurries, the loser stalls, which is symmetric and fine. Keep γ close
+  to 1, or it starts preferring risky quick attacks over sure slow wins.
+  Implementation: the turn-passing discount −1 becomes −γ in `search.py`
+  (`chance_out` discount), `selfplay.step_record` and the arena records.
+- The network already **sees the clock**: the turn number / 200 is one of its
+  inputs, so it can learn that a won position at turn 195 is really a draw.
+- Verdict: worth an A/B run (γ = 0.997 vs `az1`), but expect only a small
+  effect while timeouts are this rare.
+
+## Evaluation noise
+
+Each evaluation is 64 games per opponent, so a score near 0.5 has a 95%
+uncertainty of about ±0.12. Changes smaller than that are noise. Better options:
+more games (`--eval-games 256`, slower), and/or rating checkpoints against each
+other (an Elo ladder of `ckpt_*.pkl`), which also measures progress after
+minimax becomes too easy.
+
+## Tuning settings: plan for "meta-learning"
+
+The fitting technique is **Population-Based Training (PBT)**: several runs in
+parallel with different settings; periodically the weaker ones copy the
+stronger ones' weights and mutate their settings, so the tuning happens during
+training. Not yet, because:
+
+1. The baseline must clearly learn first, or PBT just selects whatever hides
+   the problem best.
+2. PBT needs a reliable score, and ours is ±0.12.
+3. Two GPUs split across a population of 4 gives each member ~1/4 of the speed.
+
+Order: (1) let `az1` show a trend, (2) make evaluation trustworthy, (3) a few
+hand-picked A/B runs (discount γ, simulations 32 vs 64, no imitation
+warm-start, network size via the sweep below), (4) PBT over the settings that
+turned out to matter (most likely candidates: learning rate, simulations,
+discount, sample reuse).
+
 ## BIOS update checklist
 
 The i9-14900K's core 20 (logical CPUs 10 and 11) causes random crashes. Every
