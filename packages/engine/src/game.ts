@@ -9,6 +9,22 @@ export function resetInstanceCounter(val = 0): void {
   nextInstanceCounter = val;
 }
 
+/**
+ * A fresh tile instance ID that is not already used in `state`.
+ *
+ * The counter is module-global, but states can come from elsewhere (another
+ * thread's engine via serialize/deserialize, a saved game, the Python bridge),
+ * so `${player}-${name}-${n}` may already exist. Reusing it would silently
+ * replace that tile in `state.tiles` and corrupt the board.
+ */
+function newTileId(state: GameState, player: string, defName: string): string {
+  let id: string;
+  do {
+    id = `${player}-${defName}-${++nextInstanceCounter}`;
+  } while (state.tiles.has(id));
+  return id;
+}
+
 // ---------------------------------------------------------------------------
 // Setup phase
 // ---------------------------------------------------------------------------
@@ -96,7 +112,7 @@ export function applySetupPlacement(state: GameState, coord: Coord): GameState {
   const isDukePhase = phase === 'p1_duke' || phase === 'p2_duke';
   const defName = isDukePhase ? 'Duke' : 'Footman';
 
-  const id = `${player}-${defName}-${++nextInstanceCounter}`;
+  const id = newTileId(s, player, defName);
   const tile: TileInstance = {
     defName,
     owner: player,
@@ -189,7 +205,7 @@ export function makeMove(state: GameState, move: GameMove): UndoRecord {
       undo.removedFromBag = {player, name: tileName, index: idx};
       bag.splice(idx, 1);
 
-      const id = `${player}-${tileName}-${++nextInstanceCounter}`;
+      const id = newTileId(state, player, tileName);
       const tile: TileInstance = {
         defName: tileName,
         owner: player,
@@ -210,7 +226,7 @@ export function makeMove(state: GameState, move: GameMove): UndoRecord {
       undo.removedFromBag = {player, name: move.tileName, index: idx};
       bag.splice(idx, 1);
 
-      const id = `${player}-${move.tileName}-${++nextInstanceCounter}`;
+      const id = newTileId(state, player, move.tileName);
       const tile: TileInstance = {
         defName: move.tileName,
         owner: player,

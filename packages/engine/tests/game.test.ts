@@ -356,3 +356,28 @@ describe('serialization', () => {
     expect(restored.board).toEqual(state.board);
   });
 });
+
+describe('Tile instance IDs', () => {
+  it('placing a tile never reuses an ID already on the board', () => {
+    // Simulates a state created by another engine instance (e.g. the UI thread)
+    // whose IDs happen to match this module's counter sequence.
+    resetInstanceCounter(0);
+    const state = makeState({ bags: { P1: ['Footman'], P2: [] } });
+    placeTile(state, {
+      id: 'P1-Duke-1', defName: 'Duke', owner: 'P1', side: 'A', position: { row: 0, col: 2 },
+    });
+    placeTile(state, {
+      id: 'P1-Footman-1', defName: 'Footman', owner: 'P1', side: 'A', position: { row: 0, col: 3 },
+    });
+    placeTile(state, {
+      id: 'P2-Duke-1', defName: 'Duke', owner: 'P2', side: 'A', position: { row: 5, col: 2 },
+    });
+    resetInstanceCounter(0);
+    const next = applyMove(state, { type: 'place', tileName: 'Footman', position: { row: 1, col: 2 } });
+    expect(next.tiles.size).toBe(4);
+    expect(next.tiles.get('P1-Footman-1')!.position).toEqual({ row: 0, col: 3 });
+    const placedId = next.board[1][2]!;
+    expect(placedId).not.toBe('P1-Footman-1');
+    expect(next.tiles.get(placedId)!.position).toEqual({ row: 1, col: 2 });
+  });
+});
