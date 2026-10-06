@@ -244,8 +244,8 @@ def _root(forward, states, gumbel):
     return root, invalid, action_selection.GumbelMuZeroExtraData(root_gumbel=gumbel)
 
 
-@pytest.mark.parametrize('num_simulations', [8, 24])
-def test_run_search_matches_stock_mctx(random_states, num_simulations):
+@pytest.mark.parametrize('num_simulations, max_depth', [(8, 8), (24, 24), (8, 4), (24, 4)])
+def test_run_search_matches_stock_mctx(random_states, num_simulations, max_depth):
     forward = make_random_forward()
     states = stack(random_states[::max(1, len(random_states) // 8)][:8])
     batch = states.tile.shape[0]
@@ -258,8 +258,8 @@ def test_run_search_matches_stock_mctx(random_states, num_simulations):
     def ours(root, invalid, extra):
         return S._run_search(None, rng, root=root, recurrent_fn=recurrent_fn,
                              selection_fn=S._make_selection(num_simulations, 16, QT),
-                             num_simulations=num_simulations, invalid_actions=invalid,
-                             extra_data=extra)
+                             num_simulations=num_simulations, max_depth=max_depth,
+                             invalid_actions=invalid, extra_data=extra)
 
     @jax.jit
     def theirs(root, invalid, extra):
@@ -267,8 +267,8 @@ def test_run_search_matches_stock_mctx(random_states, num_simulations):
         return mctx_search.search(None, rng, root=root, recurrent_fn=recurrent_fn,
                                   root_action_selection_fn=functools.partial(sel, depth=0),
                                   interior_action_selection_fn=sel,
-                                  num_simulations=num_simulations, invalid_actions=invalid,
-                                  extra_data=extra)
+                                  num_simulations=num_simulations, max_depth=max_depth,
+                                  invalid_actions=invalid, extra_data=extra)
 
     a, b = ours(root, invalid, extra), theirs(root, invalid, extra)
     _assert_trees_equal(a, b, rtol=1e-5, atol=1e-5)

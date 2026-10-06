@@ -151,7 +151,7 @@ def _search_tree(forward, states, num_simulations, gumbel_scale=0.0, seed=0):
     return jax.jit(lambda root: S._run_search(
         None, rng, root=root, recurrent_fn=S.make_recurrent_fn(forward),
         selection_fn=S._make_selection(num_simulations, 16, qtransforms.qtransform_completed_by_mix_value),
-        num_simulations=num_simulations,
+        num_simulations=num_simulations, max_depth=num_simulations,
         invalid_actions=jnp.concatenate([~states.legal, jnp.ones((batch, C), bool)], -1),
         extra_data=action_selection.GumbelMuZeroExtraData(
             root_gumbel=gumbel_scale * jax.random.gumbel(g, (batch, A)))))(root)

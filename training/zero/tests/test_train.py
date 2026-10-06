@@ -21,7 +21,7 @@ from training.zero.network import DukeZeroNet, make_forward
 
 
 def _tiny():
-    model = DukeZeroNet(8, 1, rngs=nnx.Rngs(0))
+    model = DukeZeroNet(8, 1, dtype=jnp.float32, rngs=nnx.Rngs(0))
     graphdef, params = nnx.split(model)
     tx = optax.chain(optax.clip_by_global_norm(1.0), optax.adamw(1e-3, weight_decay=1e-4))
     return graphdef, params, tx
@@ -125,8 +125,10 @@ def test_loss_matches_manual_and_masks(samples):
     p1, _, m1 = step(params, opt_state, b)
     p2, _, m2 = step(params, opt_state, b2)
     assert float(m1['policy_loss']) == float(m2['policy_loss'])
+    # GPU reductions use atomics, so even identical steps can differ in the
+    # last bits (~1e-8); a real leak from junk targets would be far larger.
     for x, y in zip(jax.tree.leaves(p1), jax.tree.leaves(p2)):
-        np.testing.assert_array_equal(np.asarray(x), np.asarray(y))
+        np.testing.assert_allclose(np.asarray(x), np.asarray(y), rtol=1e-6, atol=1e-7)
 
 
 def test_one_hot_targets_with_padding():
@@ -174,7 +176,7 @@ def test_checkpoint_round_trip(tmp_path, samples):
     resumed_opt = jax.device_put(ckpt['opt_state'])
     assert jax.tree.structure(resumed_opt) == jax.tree.structure(opt_state)
 
-    fresh_graphdef, _ = nnx.split(DukeZeroNet(8, 1, rngs=nnx.Rngs(123)))
+    fresh_graphdef, _ = nnx.split(DukeZeroNet(8, 1, dtype=jnp.float32, rngs=nnx.Rngs(123)))
     step2 = T.make_train_step(make_forward(fresh_graphdef), tx)
     a_params, a_opt, a_m = step(params, opt_state, b)
     b_params, b_opt, b_m = step2(jax.device_put(loaded), resumed_opt, b)
