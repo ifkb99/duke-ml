@@ -31,6 +31,15 @@ with the actions and draws that were really played, and match at every step
 Past the end of a game the targets are those of an absorbing state (value 0,
 reward 0, outcome 0, no policy) and the actions random.
 
+Counterfactual moves (make_loss_fn's `counterfactual`, not in MuZero): trained
+only on moves that were played, the model never learns what other moves lead
+to. mz2's Q head scored checkmating moves at a median 0.42 (target 1), and
+searching the model did worse than the raw policy (EXPERIMENTS.md). So each
+sample also takes a few more legal moves (drawn as the search draws root
+candidates: policy + Gumbel noise) and trains Q, reward and chance on what the
+rules say they lead to: the result if the game ends, else the network's value
+of the real next position, which is what the rules search sees on a first visit.
+
 Warm start: h and f have exactly DukeZeroNet's shape, so a MuZero run can start
 from an AlphaZero checkpoint (train.py --init-from) with only φ, ψ, g fresh.
 """
@@ -279,6 +288,7 @@ class TrajectoryReplay:
             out[key] = np.where(valid, out[key], 0).astype(np.float32)
         out['u_outcome'] = np.where(valid, out['u_outcome'], 0).astype(np.int8)
         out['u_has_policy'] = out['u_has_policy'] & valid
+        out['cf_seed'] = rng.integers(0, 2 ** 31 - 1, n).astype(np.int32)    # counterfactual move draws
         # Fresh-sample diagnostics (train.make_diagnostics) read these at t.
         for key in ('pol_idx', 'pol_p', 'has_policy', 'z'):
             out[key] = out[f'u_{key}'][:, 0]
@@ -293,10 +303,59 @@ def scale_gradient(x, scale):
     return x * scale + jax.lax.stop_gradient(x) * (1 - scale)
 
 
-def make_loss_fn(graphdef):
-    """loss_fn(params, batch) -> (loss, metrics) over K-step unrolls (TrajectoryReplay.sample)."""
+def counterfactual_moves(legal, logits, key, n: int):
+    """n distinct legal moves per position [B, n], drawn as the search draws
+    root candidates (Gumbel top-k on the policy). ok marks real picks: a
+    position with fewer than n legal moves fills the rest with illegal ones."""
+    g = jax.random.gumbel(key, legal.shape)
+    score = jnp.where(legal, jax.lax.stop_gradient(logits).astype(jnp.float32) + g, -jnp.inf)
+    _, moves = jax.lax.top_k(score, n)
+    return moves, jnp.take_along_axis(legal, moves, -1)
+
+
+def real_targets(graphdef, params, states: E.State, moves):
+    """What the rules say moves [B, n] lead to, as afterstate targets:
+    (Q for the mover, reward, chance distribution [B, n, C]). Q is the rules
+    search's first-visit value (search.make_recurrent_fn): the result if the
+    game ends, else the network's value of the real next position."""
+    model = nnx.merge(graphdef, jax.lax.stop_gradient(params))
+    b, n = moves.shape
+    after = jax.vmap(jax.vmap(E.step_decision, (None, 0)))(states, moves)
+    flat = jax.tree.map(lambda x: x.reshape((b * n,) + x.shape[2:]), after)
+    _, value = model.predict(model.represent(*observe_batch(flat)))
+    value = value.astype(jnp.float32).reshape(b, n)
+    q = jnp.where(after.done, after.reward, jnp.where(after.switched, -value, value))
+    return q, after.reward, jax.vmap(jax.vmap(E.chance_probs))(after)
+
+
+def make_loss_fn(graphdef, counterfactual: int = 0):
+    """loss_fn(params, batch) -> (loss, metrics) over K-step unrolls (TrajectoryReplay.sample).
+    counterfactual: extra legal moves per sample labelled by the rules (module docstring)."""
     observe = jax.vmap(E.observe_arrays)
     legal_actions = jax.vmap(E.legal_actions)
+
+    def counterfactual_loss(model, params, latent, logits, b, legal, place_ok, overflow):
+        empty = E._empty_state()
+        cols = [b[k].astype(jnp.int32) for k in ('tile', 'owner', 'side', 'bags', 'pending', 'ply')]
+        states = jax.vmap(lambda tile, owner, side, bags, pending, ply, legal, place_ok, overflow: empty._replace(
+            tile=tile, owner=owner, side=side, bags=bags, pending=pending, ply=ply,
+            legal=legal, place_ok=place_ok, overflow=overflow))(*cols, legal, place_ok, overflow)
+        moves, ok = counterfactual_moves(legal, logits, jax.random.key(b['cf_seed'][0]), counterfactual)
+        q_target, reward_target, chance_target = real_targets(graphdef, params, states, moves)
+        bsz = latent.shape[0]
+        after = model.afterstate(jnp.repeat(latent, counterfactual, axis=0), moves.reshape(-1))
+        q, reward, chance_logits = (x.astype(jnp.float32).reshape((bsz, counterfactual) + x.shape[1:])
+                                    for x in model.afterstate_predict(after))
+        w = ok.astype(jnp.float32)
+        mean = lambda x: jnp.sum(x * w) / jnp.maximum(w.sum(), 1)
+        wins = w * (reward_target > 0)
+        return {
+            'cf_q_loss': mean((q - q_target) ** 2),
+            'cf_reward_loss': mean((reward - reward_target) ** 2),
+            'cf_chance_loss': mean(-jnp.sum(chance_target * jax.nn.log_softmax(chance_logits), -1)),
+            'cf_q_on_wins': jnp.sum(q * wins) / jnp.maximum(wins.sum(), 1),     # want 1
+            'cf_win_rate': wins.sum() / jnp.maximum(w.sum(), 1),                 # how often a pick wins
+        }
 
     def dense_policy(idx, p):
         n = idx.shape[0]
@@ -307,7 +366,7 @@ def make_loss_fn(graphdef):
         tile, owner, side = (b[k].astype(jnp.int32) for k in ('tile', 'owner', 'side'))
         bags, pending = b['bags'].astype(jnp.int32), b['pending'].astype(jnp.int32)
         latent = model.represent(*observe(tile, owner, side, bags, pending, b['ply']))
-        legal, _, _ = legal_actions(tile, owner, side, bags, pending)
+        legal, place_ok, overflow = legal_actions(tile, owner, side, bags, pending)
         K = b['u_z'].shape[1] - 1
         m, total = {}, 0.0
         for k in range(K + 1):
@@ -324,6 +383,9 @@ def make_loss_fn(graphdef):
                 m['policy_top1'] = jnp.sum((jnp.argmax(jnp.where(legal, logits, -jnp.inf), -1)
                                             == jnp.argmax(target, -1)) * hp) / jnp.maximum(hp.sum(), 1)
                 m['legal_mass'] = jnp.mean(jnp.sum(jnp.where(legal, jnp.exp(logp), 0.0), -1))
+                if counterfactual:
+                    cf = counterfactual_loss(model, params, latent, logits, b, legal, place_ok, overflow)
+                    total = total + cf['cf_q_loss'] + cf['cf_reward_loss'] + cf['cf_chance_loss']
             if k == K:
                 break
             after = model.afterstate(latent, b['u_action'][:, k].astype(jnp.int32))
@@ -344,6 +406,7 @@ def make_loss_fn(graphdef):
             'q_loss': sum(m[f'q_{k}'] for k in range(K)) / K,
             'reward_loss': sum(m[f'reward_{k}'] for k in range(K)) / K,
             'chance_loss': sum(m[f'chance_{k}'] for k in range(K)) / K,
+            **(cf if counterfactual else {}),
         }
         return total, metrics
 

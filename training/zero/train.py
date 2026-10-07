@@ -81,6 +81,8 @@ class Config:
     muzero_warmup: int = 0         # muzero: for this many iterations self-play searches the
                                    # real rules (h + f are an AlphaZero network) while the
                                    # dynamics learn; an untrained model's values are noise
+    counterfactual_moves: int = 0  # muzero: per sample, also train Q/reward/chance on this many
+                                   # more legal moves labelled by the rules (muzero.py)
     # self-play
     games: int = 872               # parallel self-play games on the actor GPU
     learner_games: int = 792       # more self-play games on the learner GPU, which
@@ -501,6 +503,8 @@ def main(cfg: Config):
         if shape != (cfg.channels, cfg.blocks, cfg.policy_head):
             log(f'note: using the checkpoint network {shape}, not --channels/--blocks/--policy-head')
         log(f'resumed from {resume_from} at iteration {start_iteration}')
+        if not (run_dir / 'config.json').exists():      # a run started from another run's checkpoint
+            (run_dir / 'config.json').write_text(json.dumps(asdict(cfg), indent=2))
     else:
         (run_dir / 'config.json').write_text(json.dumps(asdict(cfg), indent=2))
         if muzero and cfg.init_from:
@@ -515,7 +519,7 @@ def main(cfg: Config):
     params = jax.device_put(params, learner)
     opt_state = jax.device_put(opt_state, learner)
 
-    train_steps_fn = make_train_steps(forward, tx, loss_fn=MZ.make_loss_fn(graphdef) if muzero else None)
+    train_steps_fn = make_train_steps(forward, tx, loss_fn=MZ.make_loss_fn(graphdef, cfg.counterfactual_moves) if muzero else None)
     loss_fn = make_loss_fn(forward)
     loss_eval = jax.jit(lambda p, b: loss_fn(p, b)[1])
     diagnostics = make_diagnostics(forward)

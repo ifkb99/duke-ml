@@ -325,3 +325,53 @@ self-play ~45% as fast as az3-net's (a 128-simulation call takes ~6× a
 Note: with value_scale π/10 the policy targets are much sharper (entropy
 ~0.17 vs 0.36) and agree with the network's top move ~63% of the time (az3-net:
 ~80%): search values now outweigh the prior, as intended.
+
+### mz1 → mz2: warm up with the real rules (2026-10-06 22:30)
+
+mz1's untrained model gave noise Q values, and at value_scale π/10 those
+outweigh the prior: within 10 iterations its policy matched its own search
+targets 8% of the time. Stopped (runs/mz1-aborted). **mz2** = mz1 +
+`--muzero-warmup 150`: the first 150 iterations self-play with the real-rules
+search (h + f are an AlphaZero network) while the dynamics learn from those
+games; then the model search takes over.
+
+### mz2 after the switch: the model can't see checkmate (2026-10-07 00:45)
+
+At iteration 150, Q and value losses started rising together (0.139 → 0.172 and
+0.118 → 0.152 by 230). Value targets are bootstrapped from search values, which
+now came from the model search, so this was partly noisier targets. Strength
+after the switch stayed far below az4 (minimax 4: 0.13–0.36 vs ~0.85).
+
+Tactics on 1,536 benchmark positions with the iteration-225 checkpoint:
+
+| 32-simulation search | wins kept | losses avoided |
+|---|---|---|
+| raw policy (no search) | 0.26 | 0.70 |
+| mz2's network searching the **real rules** | **0.70** | **0.82** |
+| learned model, value_scale 0.1 / π/10 / 1.0 | 0.25 | 0.63 / 0.61 / 0.62 |
+
+The network is nearly as good as az4's (0.72 / 0.86); the model makes search
+*worse* than no search, whatever the value scale. With 32 simulations over 16
+candidates, a root move's first value mostly decides it: the Q head's guess in
+the model, the value of the real next position in the rules search. Picking by
+Q alone: 0.26 / 0.62; by the real next position: 0.63 / 0.77. Games end by
+checkmate (the opponent has no legal move; a move that leaves your own Duke
+capturable is illegal), and on checkmating moves the Q head's median is 0.42
+(target 1); it prefers the mate to the other moves 25% of the time. The model
+only trains on moves that were played, so it never sees what the others lead
+to, and once its own search missed mates, self-play showed it fewer. By
+iteration 250 the raw policy got worse too (loss avoided 0.77 → 0.64): the
+model search's targets were teaching it bad moves.
+
+### mz3: counterfactual moves labelled by the rules (from 2026-10-07 01:10)
+
+mz2's iteration-250 checkpoint + `--counterfactual-moves 8` (muzero.py): every
+sample also draws 8 more legal moves the way the search draws root candidates
+(policy + Gumbel noise, without replacement; ~12.5 legal moves on average, so
+this covers most of them) and trains Q, reward and chance on what the rules say:
+the result if the move ends the game, else the network's value of the real next
+position (a test checks these equal the rules search's first-visit values).
+Not pure MuZero any more: the search still runs only on the model, but training
+uses the rules. 10 iterations of real-rules self-play (`--muzero-warmup 260`)
+while the empty replay refills. New metrics: cf_q_loss, cf_reward_loss,
+cf_chance_loss, cf_q_on_wins (Q on moves that win at once; want 1).

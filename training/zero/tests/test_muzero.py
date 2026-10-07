@@ -6,6 +6,7 @@ import numpy as np
 import optax
 import pytest
 from flax import nnx
+from mctx._src import base as mctx_base
 
 from training.zero import env as E
 from training.zero import muzero as MZ
@@ -127,6 +128,54 @@ def test_unrolled_training_learns_the_model(trajectories):
         assert float(m[k]) < float(m0[k]) or float(m0[k]) < 1e-6, k
     assert float(m0['chance_loss']) > 0.5 and float(m['chance_loss']) < float(m0['chance_loss'])
     assert float(m['legal_mass']) > float(m0['legal_mass'])
+
+
+def _states(d, idx):
+    arr = {k: jnp.asarray(d[k][idx], jnp.int32) for k in ('tile', 'owner', 'side', 'bags', 'pending', 'ply')}
+    return jax.vmap(lambda **x: E._with_legal(E._empty_state()._replace(**x)))(**arr)
+
+
+def test_counterfactual_targets_match_the_rules_search(trajectories):
+    """Each picked move is legal and distinct, and its Q target is the value the
+    rules search gives that move on a first visit."""
+    gd, params = _tiny_mz(4)
+    states = _states(trajectories, np.arange(0, len(trajectories['z']), 3)[:48])
+    logits = jnp.zeros(states.legal.shape)
+    moves, ok = MZ.counterfactual_moves(states.legal, logits, jax.random.key(0), 6)
+    legal, moves, ok = np.asarray(states.legal), np.asarray(moves), np.asarray(ok)
+    assert ok.sum() > 100
+    assert (legal[np.arange(len(moves))[:, None], moves] == ok).all()
+    for row, keep in zip(moves, ok):
+        assert len(set(row[keep].tolist())) == keep.sum()
+    q, reward, chance = MZ.real_targets(gd, params, states, jnp.asarray(moves))
+    recurrent = S.make_recurrent_fn(make_forward(gd))
+    emb = mctx_base.StochasticRecurrentState(state_embedding=states, afterstate_embedding=states,
+                                             is_decision_node=jnp.ones(len(moves), bool))
+    for j in range(moves.shape[1]):
+        out, _ = recurrent(params, None, jnp.asarray(moves[:, j]), emb)
+        np.testing.assert_allclose(np.asarray(q)[ok[:, j], j], np.asarray(out.value)[ok[:, j]], atol=1e-5)
+    np.testing.assert_allclose(np.asarray(chance).sum(-1), 1, rtol=1e-5)
+
+
+def test_counterfactual_training_lowers_its_losses(trajectories):
+    gd, params = _tiny_mz()
+    # Fresh value and Q heads output exactly 0 (and these short games hold no
+    # wins), so every Q target would be 0: jitter the weights to give it signal.
+    leaves, tree = jax.tree.flatten(params)
+    keys = jax.random.split(jax.random.key(9), len(leaves))
+    params = jax.tree.unflatten(tree, [x + 0.05 * jax.random.normal(k, x.shape, x.dtype)
+                                       for x, k in zip(leaves, keys)])
+    tx = optax.adam(3e-3)
+    replay = MZ.TrajectoryReplay(len(trajectories['z']), unroll=2)
+    replay.add(trajectories)
+    batch = jax.tree.map(jnp.asarray, replay.sample(64, np.random.default_rng(2)))
+    step = T.make_train_step(None, tx, loss_fn=MZ.make_loss_fn(gd, counterfactual=4))
+    opt = tx.init(params)
+    _, _, m0 = step(params, opt, batch)
+    for _ in range(60):
+        params, opt, m = step(params, opt, batch)
+    for k in ('cf_q_loss', 'cf_chance_loss'):
+        assert float(m[k]) < float(m0[k]), k
 
 
 def test_search_plays_legal_moves_and_chunks():
