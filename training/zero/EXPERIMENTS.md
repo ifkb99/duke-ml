@@ -257,3 +257,45 @@ Findings:
   network: the loss masks them, so they're never trained. Harmless (search
   masks too), and not a measure of rule knowledge.
 - Commands are almost never best (0.3%) or played (0.1%).
+
+## Tactics benchmark and the search's value scale (2026-10-06 20:45)
+
+**Tactics benchmark** (`tactics.py`): 120,000 positions from fresh az3-net
+iteration-1150 self-play, every move scored by depth-6 minimax. Kept: 2,839
+positions with a forced win (does the move keep it?) and 6,157 where ≥30% of
+the moves walk into a forced loss (does the move avoid them?). Forced results
+don't depend on minimax's heuristic.
+
+| network | policy: win kept | search 32 | search 128 | policy: loss avoided | search 32 | search 128 |
+|---|---|---|---|---|---|---|
+| az2 1000 | 0.29 | 0.53 | 0.65 | 0.78 | 0.85 | 0.88 |
+| az3-net 600 | 0.21 | 0.49 | 0.60 | 0.71 | 0.79 | 0.81 |
+| az3-net 1000 | 0.27 | 0.53 | 0.67 | 0.76 | 0.84 | 0.87 |
+| az3-net 1150 | 0.27 | 0.54 | 0.67 | 0.79 | 0.86 | 0.89 |
+| spatial student | 0.28 | 0.52 | 0.64 | 0.79 | 0.85 | 0.88 |
+
+Avoiding losses keeps improving with training; finding wins stalled after
+iteration ~1000, with the raw policy keeping barely a quarter of forced wins.
+
+**Why:** the policy gives mating moves tiny prior probability (often <1%
+against 70%+ for its favourite). A root action's Gumbel score is
+logit + (50 + max visits) × value_scale × Q (Q rescaled to [0, 1]); at mctx's
+default value_scale 0.1 and few visits, search can move an action by only
+~5 nats, so it sees the mate and still plays the favourite. The training
+target, softmax(logits + the same term), barely moves toward the mate either:
+a self-reinforcing blind spot.
+
+**value_scale sweep** (`diagnostics/value_scale.py`; az3-net 1150, 32
+simulations, 256 games against itself at 0.1):
+
+| value_scale | win kept | loss avoided | score vs 0.1 |
+|---|---|---|---|
+| 0.1 | 0.54 | 0.86 | – |
+| 0.2 | 0.66 | 0.86 | 0.56 |
+| 0.3 | 0.70 | 0.86 | 0.60 |
+| 0.5 | 0.72 | 0.86 | 0.54 |
+| 1.0 | 0.72 | 0.86 | 0.59 |
+
+(±0.06 on match scores.) Every scale above 0.1 is stronger; at 0.3, 32
+simulations keep more forced wins than 128 did at 0.1. **Use 0.3** for play
+and for the next run's targets.
