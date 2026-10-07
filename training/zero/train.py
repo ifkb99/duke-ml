@@ -78,6 +78,9 @@ class Config:
     dynamics_blocks: int = 3       # muzero: residual blocks in each dynamics network
     unroll_steps: int = 5          # muzero: moves unrolled through the model per sample
     init_from: str = ''            # muzero: start h and f from this AlphaZero checkpoint
+    muzero_warmup: int = 0         # muzero: for this many iterations self-play searches the
+                                   # real rules (h + f are an AlphaZero network) while the
+                                   # dynamics learn; an untrained model's values are noise
     # self-play
     games: int = 872               # parallel self-play games on the actor GPU
     learner_games: int = 792       # more self-play games on the learner GPU, which
@@ -517,18 +520,24 @@ def main(cfg: Config):
     loss_eval = jax.jit(lambda p, b: loss_fn(p, b)[1])
     diagnostics = make_diagnostics(forward)
     chunk = cfg.steps_per_call
+    def rules_search(simulations):
+        return S.make_search(forward, simulations, cfg.max_considered, cfg.max_depth, cfg.value_scale)
+
     def make_search(simulations):
         if muzero:
             return MZ.make_search(graphdef, simulations, cfg.max_considered, cfg.max_depth, cfg.value_scale)
-        return S.make_search(forward, simulations, cfg.max_considered, cfg.max_depth, cfg.value_scale)
-    make = lambda: make_search(cfg.simulations)
-    search = jax.jit(make())
-    selfplay = SP.make_selfplay(make(), cfg.unroll)
-    if cfg.full_simulations:
-        fast_selfplay = SP.make_selfplay(make(), cfg.unroll, policy_targets=False)
-        full_selfplay = SP.make_selfplay(S.chunked(
-            make_search(cfg.full_simulations),
-            cfg.full_chunks), cfg.unroll)
+        return rules_search(simulations)
+
+    def selfplay_fns(make):
+        """(plain, cheap, deep) self-play for one kind of search."""
+        if not cfg.full_simulations:
+            return SP.make_selfplay(make(cfg.simulations), cfg.unroll), None, None
+        return (None, SP.make_selfplay(make(cfg.simulations), cfg.unroll, policy_targets=False),
+                SP.make_selfplay(S.chunked(make(cfg.full_simulations), cfg.full_chunks), cfg.unroll))
+
+    search = jax.jit(make_search(cfg.simulations))
+    model_selfplay = selfplay_fns(make_search)
+    rules_selfplay = selfplay_fns(rules_search) if muzero and cfg.muzero_warmup else None
     from training.zero import tactics as TA
     tactics = TA.load() if cfg.tactics_every and TA.TACTICS.exists() else None
     np_rng = np.random.default_rng(cfg.seed + start_iteration)
@@ -605,8 +614,9 @@ def main(cfg: Config):
         # one thread each lets them run concurrently (13.6 s).
         sp_threads = ThreadPoolExecutor(len(actors), thread_name_prefix='selfplay')
 
-        def run_selfplay(i, k, t0, full):
-            fn = selfplay if not cfg.full_simulations else full_selfplay if full else fast_selfplay
+        def run_selfplay(i, k, t0, full, rules):
+            plain, cheap, deep = rules_selfplay if rules else model_selfplay
+            fn = plain if not cfg.full_simulations else deep if full else cheap
             new_states, rec = jax.block_until_ready(fn(sp_params[i], sp_states[i], k))
             return new_states, rec, time.time() - t0
 
@@ -623,10 +633,13 @@ def main(cfg: Config):
             full = bool(cfg.full_simulations) and np_rng.random() < cfg.full_fraction
             if cfg.full_simulations:
                 avg.add({'sp_full': float(full)})
+            rules = rules_selfplay is not None and it <= cfg.muzero_warmup
+            if muzero:
+                avg.add({'sp_rules_search': float(rules)})
             futures = []
             for i in range(len(actors)):
                 key, k = jax.random.split(key)
-                futures.append(sp_threads.submit(run_selfplay, i, k, t_iter, full))
+                futures.append(sp_threads.submit(run_selfplay, i, k, t_iter, full, rules))
             # 2. queue SGD on the learner GPU, a chunk of steps per call,
             if replay.size >= cfg.min_replay:
                 for _ in range(calls):
