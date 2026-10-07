@@ -87,6 +87,8 @@ def main():
     p.add_argument('--data', type=Path, nargs='+', help='reuse samples (distill_samples.npz files, concatenated)')
     p.add_argument('--samples-only', action='store_true', help='generate the teacher samples, then stop')
     p.add_argument('--steps', type=int, default=20_000, help='maximum SGD steps (stops early)')
+    p.add_argument('--check-every', type=int, default=256, help='SGD steps between held-out checks')
+    p.add_argument('--patience', type=int, default=4, help='held-out checks without improvement before stopping')
     p.add_argument('--lr', type=float, default=3e-4)
     p.add_argument('--seed', type=int, default=0)
     a = p.parse_args()
@@ -107,7 +109,8 @@ def main():
     cfg = replace(t_cfg, run=a.run, seed=a.seed, lr=a.lr,
                   channels=a.channels or t_cfg.channels, blocks=a.blocks or t_cfg.blocks,
                   policy_head=a.policy_head, imitation_steps=a.steps, imitation_value_weight=1.0,
-                  imitation_check_every=min(256, a.steps), imitation_patience=4, mirror=a.mirror)
+                  imitation_check_every=min(a.check_every, a.steps), imitation_patience=a.patience,
+                  mirror=a.mirror)
     log(f'start (commit {T.git_commit()})', kind='start', commit=T.git_commit(), distill=True,
         teacher=str(a.teacher), teacher_iteration=t_ckpt['iteration'], init=a.init,
         teacher_simulations=a.simulations or t_cfg.simulations,
