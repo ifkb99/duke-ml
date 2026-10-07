@@ -61,6 +61,7 @@ from training.zero import replay as RP
 from training.zero import rules as R
 from training.zero import search as S
 from training.zero import selfplay as SP
+from training.zero import symmetry as Y
 from training.zero.network import DukeZeroNet, make_forward
 
 RUNS = Path(__file__).resolve().parents[2] / 'runs'
@@ -108,6 +109,8 @@ class Config:
     lr_min: float = 3e-5
     weight_decay: float = 1e-4
     sample_reuse: float = 1.0      # each new sample is trained on ~this many times
+    mirror: float = 0.0            # alphazero: chance each training sample is flipped
+                                   # left-right (the game is symmetric; symmetry.py)
                                    # (az1 used 4 and the value head memorized the buffer)
     steps_per_call: int = 32       # SGD steps per jitted call (amortizes launch overhead)
     replay: int = 2_000_000
@@ -249,9 +252,10 @@ def make_train_steps(forward, tx, value_weight: float = 1.0, loss_fn=None):
     return train_steps
 
 
-def sample_stacked(replay, n_steps, batch, rng):
-    """n_steps minibatches from the replay buffer, stacked as [n_steps, batch, ...]."""
-    flat = replay.sample(n_steps * batch, rng)
+def sample_stacked(replay, n_steps, batch, rng, mirror: float = 0.0):
+    """n_steps minibatches from the replay buffer, stacked as [n_steps, batch, ...],
+    each sample mirrored left-right with probability `mirror`."""
+    flat = Y.mirror_samples(replay.sample(n_steps * batch, rng), rng, mirror)
     return {k: v.reshape((n_steps, batch) + v.shape[1:]) for k, v in flat.items()}
 
 
@@ -414,7 +418,7 @@ def imitate(cfg, samples, params, opt_state, train_steps_fn, loss_eval, learner,
     bad = 0
     avg = MetricAverager()
     for step in range(chunk, cfg.imitation_steps + 1, chunk):
-        batches = jax.device_put(sample_stacked(train, chunk, cfg.batch, np_rng), learner)
+        batches = jax.device_put(sample_stacked(train, chunk, cfg.batch, np_rng, cfg.mirror), learner)
         params, opt_state, m = train_steps_fn(params, opt_state, batches)
         avg.add(m)
         if step % cfg.imitation_check_every == 0:
@@ -483,6 +487,7 @@ def main(cfg: Config):
     log(f'devices: learner={learner} actor={actor}')
 
     muzero = cfg.algo == 'muzero'
+    assert not (muzero and cfg.mirror), '--mirror is for AlphaZero samples (MuZero unrolls would need their actions flipped too)'
     if muzero:
         from training.zero import muzero as MZ
     model = build_model(cfg, cfg.seed)
@@ -649,7 +654,7 @@ def main(cfg: Config):
             # 2. queue SGD on the learner GPU, a chunk of steps per call,
             if replay.size >= cfg.min_replay:
                 for _ in range(calls):
-                    batches = jax.device_put(sample_stacked(replay, chunk, cfg.batch, np_rng), learner)
+                    batches = jax.device_put(sample_stacked(replay, chunk, cfg.batch, np_rng, cfg.mirror), learner)
                     params, opt_state, m = train_steps_fn(params, opt_state, batches)
                     avg.add(m)
             # 3. and meanwhile file the previous iteration's games.
