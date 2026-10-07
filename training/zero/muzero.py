@@ -39,6 +39,8 @@ sample also takes a few more legal moves (drawn as the search draws root
 candidates: policy + Gumbel noise) and trains Q, reward and chance on what the
 rules say they lead to: the result if the game ends, else the network's value
 of the real next position, which is what the rules search sees on a first visit.
+Positions with a mate in one are rare (mz3: 0.4% of picks win), so `win_weight`
+counts each winning pick that many times in the Q and reward losses.
 
 Warm start: h and f have exactly DukeZeroNet's shape, so a MuZero run can start
 from an AlphaZero checkpoint (train.py --init-from) with only φ, ψ, g fresh.
@@ -328,9 +330,10 @@ def real_targets(graphdef, params, states: E.State, moves):
     return q, after.reward, jax.vmap(jax.vmap(E.chance_probs))(after)
 
 
-def make_loss_fn(graphdef, counterfactual: int = 0):
+def make_loss_fn(graphdef, counterfactual: int = 0, win_weight: float = 1.0):
     """loss_fn(params, batch) -> (loss, metrics) over K-step unrolls (TrajectoryReplay.sample).
-    counterfactual: extra legal moves per sample labelled by the rules (module docstring)."""
+    counterfactual: extra legal moves per sample labelled by the rules, winning ones
+    weighted win_weight times in the Q and reward losses (module docstring)."""
     observe = jax.vmap(E.observe_arrays)
     legal_actions = jax.vmap(E.legal_actions)
 
@@ -349,11 +352,13 @@ def make_loss_fn(graphdef, counterfactual: int = 0):
         w = ok.astype(jnp.float32)
         mean = lambda x: jnp.sum(x * w) / jnp.maximum(w.sum(), 1)
         wins = w * (reward_target > 0)
+        weighted = lambda x: mean(x * (1 + (win_weight - 1) * wins))
         return {
-            'cf_q_loss': mean((q - q_target) ** 2),
-            'cf_reward_loss': mean((reward - reward_target) ** 2),
+            'cf_q_loss': weighted((q - q_target) ** 2),
+            'cf_reward_loss': weighted((reward - reward_target) ** 2),
             'cf_chance_loss': mean(-jnp.sum(chance_target * jax.nn.log_softmax(chance_logits), -1)),
             'cf_q_on_wins': jnp.sum(q * wins) / jnp.maximum(wins.sum(), 1),     # want 1
+            'cf_q_on_others': mean(q * (1 - wins)) / jnp.maximum(mean(1 - wins), 1e-6),
             'cf_win_rate': wins.sum() / jnp.maximum(w.sum(), 1),                 # how often a pick wins
         }
 

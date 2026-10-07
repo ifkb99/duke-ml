@@ -375,3 +375,42 @@ Not pure MuZero any more: the search still runs only on the model, but training
 uses the rules. 10 iterations of real-rules self-play (`--muzero-warmup 260`)
 while the empty replay refills. New metrics: cf_q_loss, cf_reward_loss,
 cf_chance_loss, cf_q_on_wins (Q on moves that win at once; want 1).
+
+### az4 and mz3 at ~1050 iterations (2026-10-07 08:20)
+
+Every 100 iterations: minimax evals (64 games), the tactics benchmark, and a
+ladder game against the checkpoint 100 iterations earlier (64 games).
+
+| | az4 | mz3 |
+|---|---|---|
+| vs minimax6, last checks | 0.80, 0.72, 0.72, 0.80 (800–1100) | 0.54, 0.33, 0.45 (800–1000) |
+| vs minimax4 | ~0.90 | ~0.60 |
+| tactics, policy: win kept / loss avoided | 0.40 / 0.81 | 0.32 / 0.77 |
+| tactics, search32: win kept / loss avoided | 0.75 / 0.88 | 0.35 / 0.78 |
+| ladder vs 100 earlier | 0.56 0.59 0.64 0.58 0.56 0.54 0.59 | 0.57 0.45 0.62 0.48 0.60 0.51 0.47 |
+
+az4 keeps improving: it beat its 100-earlier self in all seven ladders (very
+roughly +390 Elo from 400 to 1100 chained), and beats minimax6 more often than
+az3-net, the web app's model, did (0.50–0.71 at the same iterations). Search
+has flattened at ~0.75 wins kept while the raw policy slowly absorbs it
+(0.33 → 0.40).
+
+mz3 recovered mz2's policy (loss avoided 0.64 → 0.77) but searching its model
+still adds almost nothing: 0.35 vs 0.32 wins kept, 0.78 vs 0.77 losses avoided.
+cf_q_on_wins crept 0.35 → 0.47 over 750 iterations; at that pace Q won't
+recognise a mate before the learning rate bottoms out at iteration 1500.
+
+Why so slowly: not because the picks miss mates. Real positions have few legal
+moves (tactics positions: mean 10.6, p99 28, max 37), so 8 Gumbel picks already
+cover most of them; on random-play positions a 32-move pool finds a mate in 4.2%
+of positions against 2.6% for the 8 picks. Mates are rare because positions
+with a mate in one are rare: 0.4% of picks win, so they are ~0.4% of the Q loss.
+
+### mz4: weight winning counterfactual moves (from 2026-10-07 ~08:35)
+
+mz3's iteration-1050 checkpoint + `--counterfactual-win-weight 20`: each pick
+that wins at once counts 20 times in the cf Q and reward losses (~8% of the Q
+loss instead of 0.4%). New metric cf_q_on_others (mean Q on the non-winning
+picks) to catch the Q head calling too many moves wins. Hard stop: if search32
+still doesn't clearly beat the raw policy on tactics ~100 iterations in, retire
+MuZero and give GPU1 to AlphaZero.

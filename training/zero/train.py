@@ -83,6 +83,8 @@ class Config:
                                    # dynamics learn; an untrained model's values are noise
     counterfactual_moves: int = 0  # muzero: per sample, also train Q/reward/chance on this many
                                    # more legal moves labelled by the rules (muzero.py)
+    counterfactual_win_weight: float = 1.0  # muzero: count each counterfactual move that
+                                   # wins at once this many times in the Q/reward losses
     # self-play
     games: int = 872               # parallel self-play games on the actor GPU
     learner_games: int = 792       # more self-play games on the learner GPU, which
@@ -519,7 +521,7 @@ def main(cfg: Config):
     params = jax.device_put(params, learner)
     opt_state = jax.device_put(opt_state, learner)
 
-    train_steps_fn = make_train_steps(forward, tx, loss_fn=MZ.make_loss_fn(graphdef, cfg.counterfactual_moves) if muzero else None)
+    train_steps_fn = make_train_steps(forward, tx, loss_fn=MZ.make_loss_fn(graphdef, cfg.counterfactual_moves, cfg.counterfactual_win_weight) if muzero else None)
     loss_fn = make_loss_fn(forward)
     loss_eval = jax.jit(lambda p, b: loss_fn(p, b)[1])
     diagnostics = make_diagnostics(forward)
