@@ -503,3 +503,22 @@ Three changes from az4:
 
 Judge: az5 vs az4 at equal phone time (az5 at ~1.75× az4's simulations), plus
 the usual minimax, tactics and ladder.
+
+### az5 imitation, first try: 1M positions isn't enough (2026-10-07 18:30)
+
+Teacher data took 25 min (two GPUs, ~355 positions/s each at 128
+simulations). The fresh 96×10 student stopped itself at step 9,728 (~11
+epochs, with mirroring) as held-out loss levelled off while training loss kept
+falling, i.e. it ran out of data:
+
+| held-out (107k positions, 1,056 games) | policy | top-1 | value |
+|---|---|---|---|
+| az4 (teacher's raw network) | 0.842 | 0.679 | 0.110 |
+| student 96×10 | 1.033 | 0.619 | 0.124 |
+
+Head-to-head at 32 simulations it is far behind: az5-distill1 vs az4:1800
+0.133 (W17 D0 L111), roughly −330 Elo. More teacher data is the cheaper fix
+while the student is this far behind: a teacher game costs about what a
+self-play game does, but carries az4's 128-simulation judgement. Generating
+3M more positions (runs/az5-data2, -data3) before distilling again on ~4M.
+(This first student is kept in runs/az5-distill1.)
