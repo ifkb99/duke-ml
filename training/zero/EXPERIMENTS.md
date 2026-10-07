@@ -430,3 +430,20 @@ hedges rather than separating mates from other moves. That looks like a limit
 on what the afterstate network can tell from its latent, not on training
 signal. minimax4 dipped after the restart (0.71 → 0.44) and came back to 0.62
 by 1150 (empty replay after a restart); ladder 1100 vs 1050: 0.49.
+
+### az4 on two GPUs, through the learning-rate floor (2026-10-07 13:00)
+
+From iteration 1250 az4 runs alone on both GPUs (learner GPU0, actor GPU1):
+~2.9× the self-play rate of one GPU, ~1.5× the iterations. The learning rate
+reached its floor (3e-5) at 1500.
+
+| iter | minimax6 | tactics policy (win kept / loss avoided) | search32 | ladder |
+|---|---|---|---|---|
+| 1100 | 0.80 | 0.40 / 0.81 | 0.75 / 0.88 | 0.59 vs 1000 |
+| 1300 | 0.88 | 0.40 / 0.82 | 0.75 / 0.89 | 0.48 vs 1250 |
+| 1400 | 0.97 | 0.41 / 0.82 | 0.75 / 0.89 | 0.49 vs 1300 |
+| 1500 | 0.94 | 0.42 / 0.81 | 0.76 / 0.89 | 0.55 vs 1400 |
+
+Head-to-head, 128 games, 32 simulations each: az4:1575 vs az3-net:1150 (the
+web app's model) 0.703 (W87 D6 L35), about +150 Elo. Ladders are near 0.5
+since the move to two GPUs: az4 is close to what 128×10 with this search gives.
