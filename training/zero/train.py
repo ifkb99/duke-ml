@@ -510,7 +510,9 @@ def main(cfg: Config):
         if shape != (cfg.channels, cfg.blocks, cfg.policy_head):
             log(f'note: using the checkpoint network {shape}, not --channels/--blocks/--policy-head')
         log(f'resumed from {resume_from} at iteration {start_iteration}')
-        if not (run_dir / 'config.json').exists():      # a run started from another run's checkpoint
+        # A run started from another run's checkpoint has none yet; after
+        # distill.py, the one there describes the imitation, not this run.
+        if resume_from == imitation_ckpt or not (run_dir / 'config.json').exists():
             (run_dir / 'config.json').write_text(json.dumps(asdict(cfg), indent=2))
     else:
         (run_dir / 'config.json').write_text(json.dumps(asdict(cfg), indent=2))

@@ -467,3 +467,39 @@ The trend is clear: going from 32 to 1,024 simulations takes az4 from ~0.69 to
 simulations in 3 s on the user's phone's CPU, ~840–1,400 with WebGPU; older
 phones without WebGPU get fewer. az4 as fp16 is 6.2 MB (spatial head) against
 az3-net's 15.4 MB in the web app now.
+
+## az5: a phone-sized network (from 2026-10-07 evening)
+
+Goal: play well on older, CPU-only phones too, and download less. The web app
+now thinks for 3 s per decision (TimeBudget), so a faster network gets more
+simulations, and az4 vs minimax8 showed simulations are worth a lot
+(32 → 128: 0.69 → 0.81). Candidate sizes, spatial head (export_onnx --random;
+phone CPU time from the user's phone, ms ≈ MFLOP / 9):
+
+| network | parameters | fp16 file | MFLOP | phone CPU | simulations in 3 s |
+|---|---|---|---|---|---|
+| 96×6 | 1.1M | 2.3 MB | 77 | ~8.6 ms | ~2.8× az4 |
+| 96×8 | 1.5M | 2.9 MB | 101 | ~11 ms | ~2.2× |
+| **96×10** | 1.8M | 3.6 MB | 125 | ~14 ms | ~1.75× |
+| 128×10 (az4) | 3.1M | 6.2 MB | 219 | ~24 ms | 1× |
+
+The user chose 96×10: az4's depth, 40% narrower. On WebGPU, time per call
+depends more on layer count than width, so 96×10 helps CPU phones most.
+
+Three changes from az4:
+1. **Mirror augmentation** (`--mirror 0.5`, symmetry.py). Every tile pattern
+   and the setup are left-right symmetric, so each sample is flipped with
+   probability ½: board columns and policy-target actions. Tests check that a
+   mirrored position has exactly the mirrored legal moves and that every move
+   leads to the mirrored result (and fail if the command directions aren't
+   mirrored).
+2. **Start by imitating az4's deeper search.** distill.py now takes
+   `--simulations`: az4 (iteration 1800) plays itself at 128 simulations
+   instead of 32, so the student's targets are stronger than az4's own
+   training data. 1M positions, half per GPU (~186 positions/s per GPU at
+   128 simulations, 74/s at 256). The earlier distillation was limited by data
+   (360k positions overfit after ~6 epochs); mirroring doubles it again.
+3. **Then self-play RL** from the student, with az4's settings plus mirroring.
+
+Judge: az5 vs az4 at equal phone time (az5 at ~1.75× az4's simulations), plus
+the usual minimax, tactics and ladder.
