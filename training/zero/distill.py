@@ -5,14 +5,19 @@ swap in the small spatial policy head or shrink the network for the browser.
     python -m training.zero.distill runs/az3-net/latest.pkl --run az3-spatial \\
         --policy-head spatial --init teacher
 
-1. The teacher plays itself with the same search as training (32 simulations);
-   the samples (search policy + n-step value targets) are cached in
+1. The teacher plays itself, by default with the same search as training (32
+   simulations); --simulations searches deeper, so the policy and value
+   targets are stronger than the teacher's own training data. The samples
+   (search policy + n-step value targets) are cached in
    runs/<run>/distill_samples.npz, so other students can reuse them.
 2. The student learns them with early stopping on held-out games
    (train.imitate, policy and value).
 3. The teacher's own losses on the same held-out games are the bar to reach.
 4. The student is saved as runs/<run>/imitation.pkl: `run.sh <run> ...` then
    continues it with self-play RL, skipping the minimax warm-start.
+
+Data on several GPUs: run one `--samples-only` job per GPU (different --run
+and --seed), then train with `--data a.npz b.npz`, which concatenates them.
 
 --init teacher copies every trunk and value-head weight from the teacher and
 starts only the policy head fresh, so a dense student is the fair control for
@@ -37,10 +42,11 @@ from training.zero import train as T
 from training.zero.network import DukeZeroNet, make_forward
 
 
-def teacher_games(forward, params, cfg, n_samples, games, key, log):
-    """Self-play samples from the teacher, in whole games."""
-    selfplay = SP.make_selfplay(S.make_search(forward, cfg.simulations, cfg.max_considered, cfg.max_depth),
-                                cfg.unroll)
+def teacher_games(forward, params, cfg, n_samples, games, key, log, chunks=1):
+    """Self-play samples from the teacher, in whole games. chunks: run each
+    search over the games in this many pieces (deep trees take memory)."""
+    search = S.make_search(forward, cfg.simulations, cfg.max_considered, cfg.max_depth)
+    selfplay = SP.make_selfplay(S.chunked(search, chunks), cfg.unroll)
     key, k = jax.random.split(key)
     states = jax.jit(jax.vmap(E.init))(jax.random.split(k, games))
     asm, parts, n, t0 = RP.Assembler(games, nstep=cfg.value_nstep), [], 0, time.time()
@@ -75,7 +81,11 @@ def main():
     p.add_argument('--init', choices=['teacher', 'fresh'], default='teacher')
     p.add_argument('--samples', type=int, default=400_000, help='teacher self-play samples to generate')
     p.add_argument('--games', type=int, default=512, help='parallel self-play games')
-    p.add_argument('--data', type=Path, help='reuse samples from another run\'s distill_samples.npz')
+    p.add_argument('--simulations', type=int, help='teacher search simulations (default: its training\'s)')
+    p.add_argument('--chunks', type=int, default=1, help='split each teacher search over the games')
+    p.add_argument('--mirror', type=float, default=0.0, help='chance each training sample is flipped')
+    p.add_argument('--data', type=Path, nargs='+', help='reuse samples (distill_samples.npz files, concatenated)')
+    p.add_argument('--samples-only', action='store_true', help='generate the teacher samples, then stop')
     p.add_argument('--steps', type=int, default=20_000, help='maximum SGD steps (stops early)')
     p.add_argument('--lr', type=float, default=3e-4)
     p.add_argument('--seed', type=int, default=0)
@@ -97,23 +107,30 @@ def main():
     cfg = replace(t_cfg, run=a.run, seed=a.seed, lr=a.lr,
                   channels=a.channels or t_cfg.channels, blocks=a.blocks or t_cfg.blocks,
                   policy_head=a.policy_head, imitation_steps=a.steps, imitation_value_weight=1.0,
-                  imitation_check_every=min(256, a.steps), imitation_patience=4)
+                  imitation_check_every=min(256, a.steps), imitation_patience=4, mirror=a.mirror)
     log(f'start (commit {T.git_commit()})', kind='start', commit=T.git_commit(), distill=True,
         teacher=str(a.teacher), teacher_iteration=t_ckpt['iteration'], init=a.init,
+        teacher_simulations=a.simulations or t_cfg.simulations,
         gpus=len(jax.devices()), config=asdict(cfg))
     (run_dir / 'config.json').write_text(json.dumps(asdict(cfg), indent=2))
 
     key = jax.random.key(a.seed)
-    data = a.data or run_dir / 'distill_samples.npz'
-    if data.exists():
-        samples = dict(np.load(data))
-        log(f'samples: {len(samples["z"])} from {data}')
+    data = a.data or [run_dir / 'distill_samples.npz']
+    if all(d.exists() for d in data):
+        parts = [dict(np.load(d)) for d in data]
+        samples = {k: np.concatenate([part[k] for part in parts]) for k in parts[0]}
+        log(f'samples: {len(samples["z"])} from {", ".join(map(str, data))}')
     else:
+        data = data[0]
         key, k = jax.random.split(key)
-        samples = teacher_games(t_forward, t_params, t_cfg, a.samples, a.games, k, log)
+        t_play = replace(t_cfg, simulations=a.simulations or t_cfg.simulations)
+        log(f'teacher self-play: {a.games} games at {t_play.simulations} simulations')
+        samples = teacher_games(t_forward, t_params, t_play, a.samples, a.games, k, log, a.chunks)
         np.savez(data, **samples)
         log(f'samples: {len(samples["z"])} saved to {data}', kind='distill_data',
             samples=len(samples['z']), games=int(T.game_ids(samples).max() + 1))
+    if a.samples_only:
+        return
 
     student = DukeZeroNet(cfg.channels, cfg.blocks, cfg.policy_head, rngs=nnx.Rngs(a.seed))
     graphdef, params = nnx.split(student)
