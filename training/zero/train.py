@@ -589,12 +589,14 @@ def main(cfg: Config):
             avg.add({'lr': lr})
             # Everything below up to collecting the futures overlaps with the GPUs:
             # 1. self-play on every GPU, each from its own thread,
+            # Deep or cheap for every GPU at once: an iteration waits for its slowest
+            # GPU, so choosing per GPU would make more iterations slow.
+            full = bool(cfg.full_simulations) and np_rng.random() < cfg.full_fraction
+            if cfg.full_simulations:
+                avg.add({'sp_full': float(full)})
             futures = []
             for i in range(len(actors)):
                 key, k = jax.random.split(key)
-                full = bool(cfg.full_simulations) and np_rng.random() < cfg.full_fraction
-                if cfg.full_simulations:
-                    avg.add({'sp_full': float(full)})
                 futures.append(sp_threads.submit(run_selfplay, i, k, t_iter, full))
             # 2. queue SGD on the learner GPU, a chunk of steps per call,
             if replay.size >= cfg.min_replay:
