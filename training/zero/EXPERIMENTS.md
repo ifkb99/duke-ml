@@ -414,3 +414,19 @@ loss instead of 0.4%). New metric cf_q_on_others (mean Q on the non-winning
 picks) to catch the Q head calling too many moves wins. Hard stop: if search32
 still doesn't clearly beat the raw policy on tactics ~100 iterations in, retire
 MuZero and give GPU1 to AlphaZero.
+
+mz4 result at the hard stop (iteration 1150): the weight helped but not enough.
+
+| tactics: win kept / loss avoided | policy | search32 | search gain |
+|---|---|---|---|
+| mz3, 1050 | 0.340 / 0.779 | 0.354 / 0.798 | +0.01 / +0.02 |
+| mz4, 1100 | 0.414 / 0.768 | 0.454 / 0.802 | +0.04 / +0.03 |
+| mz4, 1150 | 0.413 / 0.775 | 0.462 / 0.801 | +0.05 / +0.03 |
+| az4, 1150 | 0.408 / 0.807 | 0.753 / 0.888 | +0.35 / +0.08 |
+
+cf_q_on_wins jumped 0.47 → 0.69 within 10 iterations, then settled at ~0.63–0.65
+while cf_q_on_others stayed at −0.06: even with mates counted 20 times, Q
+hedges rather than separating mates from other moves. That looks like a limit
+on what the afterstate network can tell from its latent, not on training
+signal. minimax4 dipped after the restart (0.71 → 0.44) and came back to 0.62
+by 1150 (empty replay after a restart); ladder 1100 vs 1050: 0.49.
