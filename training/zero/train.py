@@ -582,7 +582,13 @@ def main(cfg: Config):
                 # Measured before these games are trained on: honest held-out numbers.
                 n = min(cfg.diag_samples, len(samples['z']))
                 idx = np_rng.choice(len(samples['z']), n, replace=False)
-                avg.add(diagnostics(params, jax.device_put({k: v[idx] for k, v in samples.items()}, learner)))
+                d = diagnostics(params, jax.device_put({k: v[idx] for k, v in samples.items()}, learner))
+                if not samples['has_policy'][idx].any():
+                    # Only cheap-search moves (playout cap randomization): no policy
+                    # targets, so the policy metrics would read 0.
+                    d = {k: v for k, v in d.items() if k.startswith('fresh_value') or k in (
+                        'fresh_mc_baseline', 'fresh_target_corr_mc')}
+                avg.add(d)
                 replay.add(samples)
             done = records['done'] & records['valid']
             games_done += int(done.sum())
