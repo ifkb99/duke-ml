@@ -299,3 +299,29 @@ simulations, 256 games against itself at 0.1):
 (±0.06 on match scores.) Every scale above 0.1 is stronger; at 0.3, 32
 simulations keep more forced wins than 128 did at 0.1. **Use 0.3** for play
 and for the next run's targets.
+
+## az4 (AlphaZero) and mz1 (MuZero), side by side (from 2026-10-06 22:16)
+
+Both start from the distilled spatial-head student (az3-net's trunk), 128 × 10,
+and share every setting: value_scale π/10 (spec.json), playout cap
+randomization (25% of self-play calls at 128 simulations give the policy
+targets, the rest 32 simulations and value targets only), cosine learning-rate
+decay 3e-4 → 3e-5 over 1,500 iterations, tactics benchmark every 50
+iterations. One GPU each (az4 ran on two GPUs for its first 125 iterations).
+
+- **az4**: AlphaZero, searching the real rules.
+- **mz1**: MuZero (`--algo muzero`, muzero.py): searches a learned model.
+  h and f start from the same student; the dynamics (3 residual blocks each
+  for afterstates and draws) start fresh. Unroll 5 moves. The policy is
+  trained over all actions (no legal mask), since only the root knows the
+  legal moves.
+
+az4 so far (two GPUs): minimax 4: 0.75 / 0.80 / 0.82 / 0.87 at iterations
+50 / 75 / 100 / 125 (az3-net's best: 0.84); minimax 6 0.70 at iteration 100;
+tactics (search 32) win kept 0.72, loss avoided 0.86. Deep searches make
+self-play ~45% as fast as az3-net's (a 128-simulation call takes ~6× a
+32-simulation one).
+
+Note: with value_scale π/10 the policy targets are much sharper (entropy
+~0.17 vs 0.36) and agree with the network's top move ~63% of the time (az3-net:
+~80%): search values now outweigh the prior, as intended.
