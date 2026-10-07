@@ -1,13 +1,15 @@
 import type {SerializedGameState, GameMove} from '@the-duke/engine';
 import {deserialize} from '@the-duke/engine';
-import {findBestMove, pickRandomMove, onnxEvaluate, zeroChooseMove, type ZeroEvaluate} from '@the-duke/ai';
+import {findBestMove, pickRandomMove, onnxEvaluate, zeroChooseMove, TimeBudget, type ZeroEvaluate} from '@the-duke/ai';
 
 export interface AIWorkerRequest {
   type: 'findBestMove' | 'pickRandomMove' | 'zeroMove';
   state: SerializedGameState;
   depth?: number;
-  /** zeroMove: search simulations per decision */
+  /** zeroMove: search simulations per decision (fixed) */
   simulations?: number;
+  /** zeroMove: thinking time per decision in ms, instead of fixed simulations */
+  budgetMs?: number;
   /** zeroMove: post each move's timing to the test server (tools/latency/serve.py) */
   report?: boolean;
 }
@@ -53,22 +55,26 @@ export interface AIWorkerResponse {
 }
 
 let backend = '';
+let budget: TimeBudget | null = null;     // kept across moves: it learns this device's speed
 const reportSession = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '-neural';
 const reported: object[] = [];
 
-async function zeroMove(serialized: SerializedGameState, simulations: number, report: boolean) {
+async function zeroMove(serialized: SerializedGameState, simulations: number | undefined, budgetMs: number,
+                        report: boolean) {
   const t0 = performance.now();
   const firstMove = zero === null;
   zero ??= loadZero();
   zero.catch(() => { zero = null; });   // let a later move retry
   const {evaluate, search} = await zero;
   const loadMs = firstMove ? performance.now() - t0 : 0;
+  if (budget?.ms !== budgetMs) budget = new TimeBudget(budgetMs);
   const {move, info} = await zeroChooseMove(serialized, evaluate, {
-    simulations, maxConsidered: search.maxConsidered, maxDepth: search.maxDepth, valueScale: search.valueScale});
-  console.log(`[AI] neural: ${simulations} sims, ${info.evaluations} evals in ${info.batches} batches, `
+    simulations, budget, maxConsidered: search.maxConsidered, maxDepth: search.maxDepth, valueScale: search.valueScale});
+  console.log(`[AI] neural: ${info.simulations} sims, ${info.evaluations} evals in ${info.batches} batches, `
     + `${info.ms.toFixed(0)}ms, value ${info.value.toFixed(2)}${info.drewTile ? `, drew ${info.drewTile}` : ''}`);
   if (report) {
-    reported.push({turn: serialized.turnNumber, simulations, backend, loadMs, ...info, move});
+    reported.push({turn: serialized.turnNumber, budgetMs: simulations ? undefined : budgetMs, backend, loadMs,
+                   ...info, move});
     fetch(`${import.meta.env.BASE_URL}report`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({session: reportSession, env: {browser: navigator.userAgent,
@@ -80,7 +86,7 @@ async function zeroMove(serialized: SerializedGameState, simulations: number, re
 
 self.onmessage = (e: MessageEvent<AIWorkerRequest>) => {
   if (e.data.type === 'zeroMove') {
-    zeroMove(e.data.state, e.data.simulations ?? 64, !!e.data.report).catch(err => {
+    zeroMove(e.data.state, e.data.simulations, e.data.budgetMs ?? 3000, !!e.data.report).catch(err => {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[AI Worker Error]', err);
       self.postMessage({move: null, score: 0, nodesSearched: 0, error: msg} satisfies AIWorkerResponse);

@@ -21,6 +21,6 @@ export {
   STATE_TENSOR_SIZE,
   TOTAL_ACTIONS,
 } from './encoding.js';
-export { chooseMove as zeroChooseMove, type ZeroPlayerOptions, type ZeroMoveInfo } from './zero/player.js';
+export { chooseMove as zeroChooseMove, TimeBudget, type ZeroPlayerOptions, type ZeroMoveInfo } from './zero/player.js';
 export { onnxEvaluate } from './zero/onnx.js';
 export type { Evaluate as ZeroEvaluate } from './zero/search.js';

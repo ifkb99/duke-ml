@@ -265,7 +265,7 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
       type: mode === 'vs-random' ? 'pickRandomMove' : mode === 'vs-zero' ? 'zeroMove' : 'findBestMove',
       state: serialize(state),
       depth: mode === 'vs-minimax' ? 6 : undefined,
-      simulations: mode === 'vs-zero' ? 64 : undefined,
+      budgetMs: mode === 'vs-zero' ? 3000 : undefined,   // thinking time per decision
       report: mode === 'vs-zero' && new URLSearchParams(location.search).has('report'),
     };
 
