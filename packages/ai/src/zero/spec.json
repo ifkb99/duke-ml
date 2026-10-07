@@ -13,11 +13,11 @@
     "dirs4": [[-1, 0], [1, 0], [0, -1], [0, 1]]
   },
   "search": {
-    "_comment": "Defaults for training and the browser; an exported model's .json records the settings its run used. valueScale and maxvisitInit: completed-Q weight (50 + max visits) * valueScale. chanceTieTolerance: chance outcomes this close count as tied (lowest outcome wins).",
+    "_comment": "Defaults for training and the browser; an exported model's .json records the settings its run used. valueScale and maxvisitInit: completed-Q weight (50 + max visits) * valueScale. chanceTieTolerance: chance outcomes this close count as tied (lowest outcome wins). valueScale is pi/10: anything from 0.2 to 1.0 beat 0.1 (EXPERIMENTS.md, value_scale sweep).",
     "simulations": 32,
     "maxConsidered": 16,
     "maxDepth": 16,
-    "valueScale": 0.1,
+    "valueScale": 0.3141592653589793,
     "maxvisitInit": 50,
     "rescaleEpsilon": 1e-8,
     "chanceTieTolerance": 1e-6
