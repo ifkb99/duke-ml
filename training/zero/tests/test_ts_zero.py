@@ -194,7 +194,8 @@ def test_bridge_matches_python(oracle):
 # End to end: a real checkpoint, exported to ONNX, searched in TypeScript
 # ---------------------------------------------------------------------------
 
-def test_onnx_search_matches_jax(oracle, search_positions, tmp_path):
+@pytest.mark.parametrize('run', ['az2/ckpt_001000.pkl', 'az4/ckpt_001800.pkl'])   # dense, spatial head
+def test_onnx_search_matches_jax(oracle, search_positions, tmp_path, run):
     """The browser pipeline (observe -> ONNX -> TS search) against the JAX
     search with the same weights. ONNX and JAX differ by ~1e-5, which can flip
     a near-tie, so most (not all) positions must agree exactly."""
@@ -206,15 +207,16 @@ def test_onnx_search_matches_jax(oracle, search_positions, tmp_path):
     from training.zero import train as T
     from training.zero.network import DukeZeroNet, make_forward
     from training.zero.tests.conftest import REPO, stack
-    ckpt = REPO / 'runs/az2/ckpt_001000.pkl'
+    ckpt = REPO / 'runs' / run
     if not ckpt.exists():
-        pytest.skip('no az2 checkpoint')
+        pytest.skip(f'no {run} checkpoint')
     subprocess.run([sys.executable, '-m', 'training.zero.export_onnx', str(ckpt), str(tmp_path / 'net')],
                    cwd=REPO, check=True, capture_output=True)
     oracle.ask({'op': 'onnx', 'path': str(tmp_path / 'net.fp32.onnx')})
 
     _, params, c = T.load_params(ckpt)
     graphdef, params32 = nnx.split(DukeZeroNet(c['config']['channels'], c['config']['blocks'],
+                                               c['config'].get('policy_head', 'dense'),
                                                dtype=jnp.float32, rngs=nnx.Rngs(0)))
     nnx.replace_by_pure_dict(params32, nnx.to_pure_dict(params))
     positions = search_positions[:16]
