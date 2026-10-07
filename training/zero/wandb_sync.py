@@ -100,6 +100,16 @@ def convert(rec, state):
     return None
 
 
+# distill.py's one-off results (the teacher's held-out losses, the student's
+# final ones, the data generated): run summary values, not curves.
+SUMMARY_KINDS = ('distill_data', 'distill_teacher', 'distill_result')
+
+
+def summary(rec) -> dict:
+    return {f"{rec['kind']}/{k}": v for k, v in rec.items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and k != 'time'}
+
+
 def run_config(run_dir: Path):
     for line in (run_dir / 'metrics.jsonl').open():
         rec = json.loads(line)
@@ -144,7 +154,12 @@ def sync(run: str, follow: bool, gpus: int, poll: float, run_id: str | None = No
             n = 0
             for line in complete.splitlines():
                 if line.strip():
-                    row = convert(json.loads(line), state)
+                    rec = json.loads(line)
+                    if rec.get('kind') in SUMMARY_KINDS:
+                        wb.summary.update(summary(rec))
+                        n += 1
+                        continue
+                    row = convert(rec, state)
                     if row:
                         wb.log(row)
                         n += 1
