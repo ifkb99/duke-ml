@@ -447,3 +447,23 @@ reached its floor (3e-5) at 1500.
 Head-to-head, 128 games, 32 simulations each: az4:1575 vs az3-net:1150 (the
 web app's model) 0.703 (W87 D6 L35), about +150 Elo. Ladders are near 0.5
 since the move to two GPUs: az4 is close to what 128×10 with this search gives.
+
+### az4 with more simulations vs minimax8 (2026-10-07 15:20)
+
+az4:1575 against TypeScript minimax depth 8, 32 games per level (colours
+alternate), Gumbel scale 0, all four levels at once on the actor GPU while
+training ran (so slow: 9 min at 32 simulations, 2 h at 1,024).
+
+| simulations | score | W-D-L | mean plies |
+|---|---|---|---|
+| 32 (training's budget) | 0.688 | 22-0-10 | 58 |
+| 128 | 0.812 | 26-0-6 | 51 |
+| 512 | 0.719 | 23-0-9 | 61 |
+| 1,024 | 0.906 | 29-0-3 | 52 |
+
+At 32 games one score has a standard error of ~0.08, so 512's dip is noise.
+The trend is clear: going from 32 to 1,024 simulations takes az4 from ~0.69 to
+~0.91 against minimax8. Phone budgets (tools/latency): 128 × 10 does ~120
+simulations in 3 s on the user's phone's CPU, ~840–1,400 with WebGPU; older
+phones without WebGPU get fewer. az4 as fp16 is 6.2 MB (spatial head) against
+az3-net's 15.4 MB in the web app now.
