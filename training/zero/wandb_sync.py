@@ -90,6 +90,11 @@ def convert(rec, state):
         out['ladder/iterations_apart'] = rec['iteration'] - rec['opponent']
         out['iteration'], out['games'] = rec['iteration'], state['games']
         return out
+    if kind == 'tactics':
+        out.update({f'tactics/{k}': v for k, v in rec.items()
+                    if isinstance(v, (int, float)) and k not in ('time', 'iteration')})
+        out['iteration'], out['games'] = rec['iteration'], state['games']
+        return out
     if kind == 'imitation':
         return {f'imitation/{k}': v for k, v in rec.items() if k not in ('time', 'kind')}
     return None
