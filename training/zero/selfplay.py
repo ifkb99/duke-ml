@@ -83,6 +83,8 @@ def make_selfplay(search, unroll: int, policy_targets: bool = True):
             'has_policy': jnp.full_like(s.done, policy_targets),
             **step_record(s, after, out.action),
             'search_value': out.search_value,
+            'action': out.action.astype(jnp.int16),     # for MuZero's unrolls
+            'outcome': outcome.astype(jnp.int8),
         }
         return _reset_done(nxt, k_reset), record
 

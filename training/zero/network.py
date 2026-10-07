@@ -90,10 +90,19 @@ class DukeZeroNet(nnx.Module):
                                     kernel_init=nnx.initializers.zeros)  # value 0 at init
 
     def __call__(self, planes, features):
-        b = planes.shape[0]
+        return self.predict(self.represent(planes, features))
+
+    def represent(self, planes, features):
+        """Board -> latent [B,6,6,C]: the trunk's residual stream (MuZero's h)."""
         x = self.stem(planes).astype(jnp.float32) + self.film(features)[:, None, None, :]  # [B,6,6,C]
         for block in self.blocks:
             x = block(x)
+        return x
+
+    def predict(self, x):
+        """Latent -> (logits, value): the heads (MuZero's f). Normalizes its input,
+        so the latent's scale doesn't matter."""
+        b = x.shape[0]
         x = nnx.relu(self.norm(x))
         pooled = x.mean(axis=(1, 2))                                      # [B,C] board summary
 

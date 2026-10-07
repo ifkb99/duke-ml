@@ -81,7 +81,11 @@ class Assembler:
                 self.partial[b].append({k: v[start:] for k, v in col.items()})
         if not finished:
             return None
-        return _concat([_game_samples(g, self.nstep) for g in finished])
+        return _concat([self.game_samples(g) for g in finished])
+
+    def game_samples(self, game: dict) -> dict:
+        """Training samples from one finished game (muzero.py overrides this)."""
+        return _game_samples(game, self.nstep)
 
     def drop_partial(self):
         """Forget unfinished games (e.g. at the end of a fixed-size match)."""

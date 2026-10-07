@@ -284,9 +284,29 @@ def make_search(forward, num_simulations: int, max_considered: int = SEARCH['max
     `value_scale`: how much search values count against the prior (mctx's
     qtransform_completed_by_mix_value). Defaults: packages/ai/src/zero/spec.json.
     """
+    def root_fn(params, states):
+        logits, value = forward(params, *observe_batch(states))
+        embedding = mctx_base.StochasticRecurrentState(
+            state_embedding=states, afterstate_embedding=states,
+            is_decision_node=jnp.ones(states.tile.shape[0], bool))
+        return logits, value, embedding
+
+    return make_search_from(root_fn, make_recurrent_fn(forward), num_simulations, max_considered,
+                            max_depth, value_scale)
+
+
+def make_search_from(root_fn, recurrent_fn, num_simulations: int,
+                     max_considered: int = SEARCH['maxConsidered'], max_depth: int | None = None,
+                     value_scale: float = SEARCH['valueScale']):
+    """The Gumbel search for any model of the game (make_search's machinery).
+
+    root_fn(params, states) -> (logits [B, A], value [B], root embedding);
+    recurrent_fn: as make_recurrent_fn's, stepping whatever the embeddings
+    hold. The real game's legal moves mask the root; deeper nodes use the
+    recurrent function's priors as they are.
+    """
     # A simulation adds one node, so it can't go deeper than the simulation count.
     max_depth = max_depth or min(SEARCH['maxDepth'], num_simulations)
-    recurrent_fn = make_recurrent_fn(forward)
     # value_scale weighs search values against the prior: a root action's score
     # is logit + (maxvisit_init + max visits) * value_scale * Q rescaled to
     # [0, 1], so at 50 and 0.1 search can shift a move by only ~5 nats early on.
@@ -296,7 +316,7 @@ def make_search(forward, num_simulations: int, max_considered: int = SEARCH['max
 
     def search(params, rng, states: E.State, gumbel_scale=1.0) -> SearchOutput:
         batch = states.tile.shape[0]
-        logits, value = forward(params, *observe_batch(states))
+        logits, value, embedding = root_fn(params, states)
         invalid = ~states.legal
         prior = _masked(logits, states.legal)
 
@@ -304,11 +324,7 @@ def make_search(forward, num_simulations: int, max_considered: int = SEARCH['max
         gumbel = gumbel_scale * jax.random.gumbel(gumbel_rng, (batch, A))
         root = mctx.RootFnOutput(
             prior_logits=jnp.concatenate([prior, jnp.full((batch, C), NEG)], -1),
-            value=value,
-            embedding=mctx_base.StochasticRecurrentState(
-                state_embedding=states, afterstate_embedding=states,
-                is_decision_node=jnp.ones(batch, bool)),
-        )
+            value=value, embedding=embedding)
         tree = _run_search(
             params, rng, root=root, recurrent_fn=recurrent_fn, selection_fn=selection,
             num_simulations=num_simulations, max_depth=max_depth,

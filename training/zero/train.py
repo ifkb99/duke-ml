@@ -74,6 +74,10 @@ class Config:
     channels: int = 96
     blocks: int = 6
     policy_head: str = 'dense'     # 'spatial': ~21K-parameter head instead of ~4.6M (network.py)
+    algo: str = 'alphazero'        # 'muzero': search a learned model (muzero.py)
+    dynamics_blocks: int = 3       # muzero: residual blocks in each dynamics network
+    unroll_steps: int = 5          # muzero: moves unrolled through the model per sample
+    init_from: str = ''            # muzero: start h and f from this AlphaZero checkpoint
     # self-play
     games: int = 872               # parallel self-play games on the actor GPU
     learner_games: int = 792       # more self-play games on the learner GPU, which
@@ -162,8 +166,8 @@ def make_loss_fn(forward, value_weight: float = 1.0):
     return loss_fn
 
 
-def make_train_step(forward, tx, value_weight: float = 1.0):
-    grad_fn = jax.value_and_grad(make_loss_fn(forward, value_weight), has_aux=True)
+def make_train_step(forward, tx, value_weight: float = 1.0, loss_fn=None):
+    grad_fn = jax.value_and_grad(loss_fn or make_loss_fn(forward, value_weight), has_aux=True)
 
     @jax.jit
     def train_step(params, opt_state, batch):
@@ -217,7 +221,7 @@ def make_diagnostics(forward):
     return diag
 
 
-def make_train_steps(forward, tx, value_weight: float = 1.0):
+def make_train_steps(forward, tx, value_weight: float = 1.0, loss_fn=None):
     """Several SGD steps in ONE jitted call: train_steps(params, opt, batches).
 
     `batches` has a leading [n_steps] axis. Launching a jitted function costs
@@ -225,7 +229,7 @@ def make_train_steps(forward, tx, value_weight: float = 1.0):
     one-call-per-step training launch-bound; scanning over steps on the device
     pays that once per call. Returns metrics averaged over the steps.
     """
-    step = make_train_step(forward, tx, value_weight)
+    step = make_train_step(forward, tx, value_weight, loss_fn)
 
     @jax.jit
     def train_steps(params, opt_state, batches):
@@ -267,6 +271,13 @@ class MetricAverager:
 def fmt(v: float) -> str:
     """Log formatting: 3 decimals, or scientific for small values like the learning rate."""
     return f'{v:.2e}' if v != 0 and abs(v) < 0.01 else f'{v:.3f}'
+
+
+def build_model(cfg, seed: int):
+    if cfg.algo == 'muzero':
+        from training.zero.muzero import MuZeroNet
+        return MuZeroNet(cfg.channels, cfg.blocks, cfg.policy_head, cfg.dynamics_blocks, rngs=nnx.Rngs(seed))
+    return DukeZeroNet(cfg.channels, cfg.blocks, cfg.policy_head, rngs=nnx.Rngs(seed))
 
 
 def make_optimizer(cfg):
@@ -321,7 +332,7 @@ def load_params(path: Path):
     with path.open('rb') as f:
         ckpt = pickle.load(f)
     c = ckpt['config']
-    model = DukeZeroNet(c['channels'], c['blocks'], c.get('policy_head', 'dense'), rngs=nnx.Rngs(0))
+    model = build_model(Config(**{k: v for k, v in c.items() if k in Config.__dataclass_fields__}), seed=0)
     graphdef, params = nnx.split(model)
     nnx.replace_by_pure_dict(params, ckpt['params'])
     return graphdef, params, ckpt
@@ -464,7 +475,10 @@ def main(cfg: Config):
     learner, actor = devices[0], devices[-1]
     log(f'devices: learner={learner} actor={actor}')
 
-    model = DukeZeroNet(cfg.channels, cfg.blocks, cfg.policy_head, rngs=nnx.Rngs(cfg.seed))
+    muzero = cfg.algo == 'muzero'
+    if muzero:
+        from training.zero import muzero as MZ
+    model = build_model(cfg, cfg.seed)
     graphdef, params = nnx.split(model)
     forward = make_forward(graphdef)
     tx = make_optimizer(cfg)
@@ -486,25 +500,34 @@ def main(cfg: Config):
         log(f'resumed from {resume_from} at iteration {start_iteration}')
     else:
         (run_dir / 'config.json').write_text(json.dumps(asdict(cfg), indent=2))
+        if muzero and cfg.init_from:
+            # h and f from a trained AlphaZero network; only the dynamics start fresh.
+            _, az_params, _ = load_params(Path(cfg.init_from))
+            params = MZ.copy_alphazero(params, az_params)
+            opt_state = tx.init(params)
+            log(f'h and f initialized from {cfg.init_from}')
     log(f'start (commit {git_commit()})', kind='start', commit=git_commit(),
         resumed_from=str(resume_from) if resume_from else None,
         iteration=start_iteration, gpus=len(devices), config=asdict(cfg))
     params = jax.device_put(params, learner)
     opt_state = jax.device_put(opt_state, learner)
 
-    train_steps_fn = make_train_steps(forward, tx)
+    train_steps_fn = make_train_steps(forward, tx, loss_fn=MZ.make_loss_fn(graphdef) if muzero else None)
     loss_fn = make_loss_fn(forward)
     loss_eval = jax.jit(lambda p, b: loss_fn(p, b)[1])
     diagnostics = make_diagnostics(forward)
     chunk = cfg.steps_per_call
-    make = lambda: S.make_search(forward, cfg.simulations, cfg.max_considered, cfg.max_depth,
-                                 cfg.value_scale)
+    def make_search(simulations):
+        if muzero:
+            return MZ.make_search(graphdef, simulations, cfg.max_considered, cfg.max_depth, cfg.value_scale)
+        return S.make_search(forward, simulations, cfg.max_considered, cfg.max_depth, cfg.value_scale)
+    make = lambda: make_search(cfg.simulations)
     search = jax.jit(make())
     selfplay = SP.make_selfplay(make(), cfg.unroll)
     if cfg.full_simulations:
         fast_selfplay = SP.make_selfplay(make(), cfg.unroll, policy_targets=False)
         full_selfplay = SP.make_selfplay(S.chunked(
-            S.make_search(forward, cfg.full_simulations, cfg.max_considered, cfg.max_depth, cfg.value_scale),
+            make_search(cfg.full_simulations),
             cfg.full_chunks), cfg.unroll)
     from training.zero import tactics as TA
     tactics = TA.load() if cfg.tactics_every and TA.TACTICS.exists() else None
@@ -516,7 +539,7 @@ def main(cfg: Config):
     avg = MetricAverager()
     try:
         # --- imitation warm-start (fresh runs only) ---
-        if resume_from is None and cfg.imitation_games > 0:
+        if resume_from is None and cfg.imitation_games > 0 and not muzero:
             key, k = jax.random.split(key)
             samples = imitation_data(cfg, pool, k, log, run_dir / 'imitation_data.npz')
             params, opt_state = imitate(cfg, samples, params, opt_state,
@@ -529,7 +552,7 @@ def main(cfg: Config):
             save_checkpoint(run_dir / 'imitation.pkl', params, opt_state, 0, cfg)
         # Self-play starts from an empty buffer: the minimax games have done
         # their job, and their value targets are plain game results.
-        replay = RP.Replay(cfg.replay)
+        replay = MZ.TrajectoryReplay(cfg.replay, cfg.unroll_steps) if muzero else RP.Replay(cfg.replay)
 
         # --- self-play ---
         # One self-play stream per GPU. Each call is dispatched asynchronously,
@@ -544,7 +567,7 @@ def main(cfg: Config):
             sp_states.append(jax.device_put(jax.jit(jax.vmap(E.init))(jax.random.split(k, n)), dev))
             sp_params.append(jax.device_put(params, dev))
         total_games = sum(n for _, n in actors)
-        assembler = RP.Assembler(total_games, nstep=cfg.value_nstep)
+        assembler = (MZ.TrajectoryAssembler if muzero else RP.Assembler)(total_games, nstep=cfg.value_nstep)
         ladder_params, ladder_iteration = jax.device_get(params), start_iteration
         new_per_iter = total_games * cfg.unroll
         calls = max(1, round(cfg.sample_reuse * new_per_iter / cfg.batch / chunk))
