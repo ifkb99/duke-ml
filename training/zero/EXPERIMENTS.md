@@ -605,3 +605,10 @@ its imitation start, and its own ladder agrees (300 vs 200 0.45, 400 vs 300
 loss (policy ~0.87, value ~0.108). Part of az5's early gain was catching up to
 its teacher, which big1 never had to do; az4 itself gained only ~+33 Elo from
 1400 to 1800.
+
+az5 stopped at 1610 (11:00, 2026-10-08); its learning rate had reached the
+floor at 1500. az5:1600 vs az5:1400: 0.521 over 256 games, so 1600 is the
+one exported: **runs/web-models/az5-1600**, now the web app's model
+(fp16 3.6 MB, 125 MFLOP per evaluation, down from az4's 6.2 MB and 219).
+big1 resumed from iteration 475 on both GPUs; check it against az4:1800
+again around iteration 800, and retire it if it's still flat.

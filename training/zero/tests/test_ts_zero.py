@@ -194,7 +194,7 @@ def test_bridge_matches_python(oracle):
 # End to end: a real checkpoint, exported to ONNX, searched in TypeScript
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize('run', ['az2/ckpt_001000.pkl', 'az4/ckpt_001800.pkl'])   # dense, spatial head
+@pytest.mark.parametrize('run', ['az2/ckpt_001000.pkl', 'az4/ckpt_001800.pkl', 'az5/ckpt_001600.pkl'])   # dense, spatial, the web app's
 def test_onnx_search_matches_jax(oracle, search_positions, tmp_path, run):
     """The browser pipeline (observe -> ONNX -> TS search) against the JAX
     search with the same weights. ONNX and JAX differ by ~1e-5, which can flip
