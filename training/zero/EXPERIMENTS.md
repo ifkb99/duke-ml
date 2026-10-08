@@ -612,3 +612,11 @@ one exported: **runs/web-models/az5-1600**, now the web app's model
 (fp16 3.6 MB, 125 MFLOP per evaluation, down from az4's 6.2 MB and 219).
 big1 resumed from iteration 475 on both GPUs; check it against az4:1800
 again around iteration 800, and retire it if it's still flat.
+
+Check 2026-10-08 13:30, big1:575 at 32 simulations, 128 games each:
+vs az4:1800 **0.590** (W73 D5 L50; it was 0.523 at 400), vs az5:1600 0.402
+(W49 D5 L74). Moving again, but not yet past az5, so not yet a useful
+teacher for it. Its own ladder read 0.30 for 500 vs 475 right after the
+restart: the replay buffer isn't saved, so for its first iterations after a
+restart it trains on very few games. On both GPUs it does ~44 iterations an
+hour.
