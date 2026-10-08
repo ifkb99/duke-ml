@@ -522,3 +522,34 @@ while the student is this far behind: a teacher game costs about what a
 self-play game does, but carries az4's 128-simulation judgement. Generating
 3M more positions (runs/az5-data2, -data3) before distilling again on ~4M.
 (This first student is kept in runs/az5-distill1.)
+
+### az5 imitation, second try: 4M positions (2026-10-07 20:00)
+
+3M more teacher positions (runs/az5-data2, -data3: 70 min on two GPUs), 4.05M
+in all (~40k games). The student (fresh 96×10, `--mirror 0.5`, checks every
+2,048 steps, patience 4) kept step 43,008 (~12 epochs):
+
+| held-out (414k positions, 4,029 games) | policy | top-1 | value |
+|---|---|---|---|
+| az4 (teacher's raw network) | 0.844 | 0.679 | 0.110 |
+| student, 1M positions (az5-distill1) | 1.033 | 0.619 | 0.124 |
+| **student, 4M positions** | **0.873** | **0.672** | **0.111** |
+
+Policy loss vs value loss, for scale (20k teacher positions): a uniform guess
+over the ~10 legal moves scores 2.01 and the targets' own entropy (the floor)
+is 0.17; for value, always guessing 0 scores 0.257. So policy 0.87 and value
+0.11 are each ~60% of the way from guessing to the floor.
+
+Head-to-head with az4:1800:
+
+| az5 student | az4 | games | score |
+|---|---|---|---|
+| 32 simulations | 32 | 256 | 0.396 (W96 D11 L149), ~−75 Elo |
+| 56 (equal phone time) | 32 | 128 | **0.574** (W71 D5 L52) |
+| 210 (equal phone time, ~3 s on the user's phone CPU) | 120 | 128 | **0.578** (W72 D4 L52) |
+
+Before any RL, the 3.6 MB student already beats az4 at equal phone time,
+~+50 Elo. RL started at 20:10 on both GPUs:
+`run.sh az5 --channels 96 --blocks 10 --policy-head spatial --workers 15
+--full-simulations 128 --full-fraction 0.25 --full-chunks 4 --lr-decay-start 0
+--lr-decay-iterations 1500 --lr-min 3e-5 --tactics-every 50 --mirror 0.5`.
