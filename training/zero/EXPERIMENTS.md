@@ -585,3 +585,23 @@ So the extra capacity barely shows on held-out loss: 4M positions limit both
 students. In play it shows more: big1's student scored **0.523** vs
 az4:1800 at 32 simulations each (128 games, W64 D6 L58), where az5's scored
 0.396. RL started 22:14 at 352 moves/s, as predicted.
+
+### Check-in 2026-10-08 10:25 (az5 at 1565, big1 at 450)
+
+Against az4:1800, 128 games each:
+
+| | az5:1400 | big1:400 | at the start of RL |
+|---|---|---|---|
+| equal simulations (32 vs 32) | **0.578** (W72 D4 L52) | 0.523 (W65 D4 L59) | az5 0.396, big1 0.523 |
+| equal phone time (210 vs 120) | **0.668** (W85 D1 L42) | | az5 0.578 |
+
+az5, the 3.6 MB phone network, now beats az4 (6.2 MB) even at equal
+simulations, ~+55 Elo, and ~+120 Elo at equal phone time. Its learning rate
+reached the floor (3e-5) at 1500.
+
+big1 has not moved in 400 iterations (~12 h on one GPU): the same 0.523 as
+its imitation start, and its own ladder agrees (300 vs 200 0.45, 400 vs 300
+0.48). It isn't overfitting: its loss on fresh self-play matches its training
+loss (policy ~0.87, value ~0.108). Part of az5's early gain was catching up to
+its teacher, which big1 never had to do; az4 itself gained only ~+33 Elo from
+1400 to 1800.
