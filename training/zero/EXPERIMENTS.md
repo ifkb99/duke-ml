@@ -577,3 +577,11 @@ whole run was ~28M positions, ~1 day at that rate.
 
 Start: imitation of the same 4.05M az4@128 positions (fresh init, `--mirror
 0.5`), then self-play RL on GPU0 with az4's settings and `--mirror 0.5`.
+
+Imitation stopped early at step 24,576 (of 100k; checks every 2,048, patience
+4), 70 minutes. On held-out games: policy 0.865 (top-1 0.675), value 0.110,
+vs az5's student 0.873 / 0.672 / 0.111 and the teacher 0.844 / 0.679 / 0.110.
+So the extra capacity barely shows on held-out loss: 4M positions limit both
+students. In play it shows more: big1's student scored **0.523** vs
+az4:1800 at 32 simulations each (128 games, W64 D6 L58), where az5's scored
+0.396. RL started 22:14 at 352 moves/s, as predicted.
