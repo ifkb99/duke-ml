@@ -621,6 +621,14 @@ restart: the replay buffer isn't saved, so for its first iterations after a
 restart it trains on very few games. On both GPUs it does ~44 iterations an
 hour.
 
+Check 2026-10-08 17:20, big1:700 at 32 simulations: vs az5:1600 **0.465**
+(W113 D12 L131, 256 games; 0.402 at 575), vs az4:1800 0.559 (W69 D5 L54,
+128 games). Its raw policy is now the best we have on the tactics set: wins
+kept 0.573 (az5:1500 0.528, its own start 0.42), losses avoided 0.847. With
+search the tactics numbers are level with az5. Ladder 600 vs 500 0.66, 700 vs
+600 0.49. Pace ~36 iterations an hour; the learning rate is 1.8e-4, reaching
+the 3e-5 floor at 1500.
+
 ## Smaller web download: block-quantized weights (2026-10-08)
 
 The user asked about LittleBit (arXiv 2506.13771, 0.1 bits per weight for
