@@ -553,3 +553,27 @@ Before any RL, the 3.6 MB student already beats az4 at equal phone time,
 `run.sh az5 --channels 96 --blocks 10 --policy-head spatial --workers 15
 --full-simulations 128 --full-fraction 0.25 --full-chunks 4 --lr-decay-start 0
 --lr-decay-iterations 1500 --lr-min 3e-5 --tactics-every 50 --mirror 0.5`.
+
+## big1: a 256×20 teacher (from 2026-10-07 21:00)
+
+The az5 student matched az4 on held-out games, so the student's ceiling is
+its teacher. The user chose to try a much bigger teacher, 256×20, to distil
+into the phone network later. Both run at once: az5 RL moved to GPU1 alone
+(from iteration 50), big1 on GPU0.
+
+Speed on one GPU, random weights (scratchpad big_speed.py, 872 games):
+
+| | 128×10 | 256×20 | ratio |
+|---|---|---|---|
+| parameters | 3.1M | 23.9M | 7.7× |
+| self-play, 32 simulations | 2,375 positions/s | 712 | 3.3× slower |
+| self-play, 128 simulations | 351 | 138 | 2.5× slower |
+| SGD step, batch 1,024 | 25 ms | 125 ms | 5× slower |
+
+Self-play slows less than the arithmetic (8×) because the rules and the tree
+bookkeeping cost the same at any size. With training's mix (25% at 128
+simulations) big1 makes ~350 positions/s on one GPU vs ~970 for 128×10; az4's
+whole run was ~28M positions, ~1 day at that rate.
+
+Start: imitation of the same 4.05M az4@128 positions (fresh init, `--mirror
+0.5`), then self-play RL on GPU0 with az4's settings and `--mirror 0.5`.
