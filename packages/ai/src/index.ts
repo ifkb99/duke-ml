@@ -23,4 +23,5 @@ export {
 } from './encoding.js';
 export { chooseMove as zeroChooseMove, TimeBudget, type ZeroPlayerOptions, type ZeroMoveInfo } from './zero/player.js';
 export { onnxEvaluate } from './zero/onnx.js';
+export { dequantize, type QuantInfo } from './zero/quant.js';
 export type { Evaluate as ZeroEvaluate } from './zero/search.js';

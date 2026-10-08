@@ -15,6 +15,10 @@
  *   {"op": "toMove", "state": S, "actions": [...]}  -> {"moves": [GameMove...]}
  *   {"op": "onnx", "path": file}  -> {} uses that ONNX model (onnxruntime-web on the CPU)
  *     instead of the test network for "search"
+ *   {"op": "onnxQuant", "path": file, "packed": file, "quant": QuantInfo, "expect": file,
+ *    "planes": [...], "features": [...], "n": b}  -> {"mismatches", "value", "logits"}
+ *     loads a quantized export as the web app does (quant.ts), compares the
+ *     rebuilt weights with the export's .weights file, then evaluates the planes
  * The test network (h = tanh(x W), logits = h U, value = tanh(h v), x = the
  * flattened planes and features) is simple enough to write identically in JAX.
  * S: {tile, owner, side, bags (flat [2*15]), player, pending, ply, done,
@@ -27,6 +31,8 @@ import * as E from '../../../packages/ai/src/zero/env.js';
 import {search, type NetOutput} from '../../../packages/ai/src/zero/search.js';
 import {actionToMove, fromGameState, moveToAction} from '../../../packages/ai/src/zero/bridge.js';
 import {onnxEvaluate} from '../../../packages/ai/src/zero/onnx.js';
+import {dequantize} from '../../../packages/ai/src/zero/quant.js';
+import {readFileSync} from 'node:fs';
 import type {Evaluate} from '../../../packages/ai/src/zero/search.js';
 
 type Json = Record<string, any>;
@@ -117,6 +123,21 @@ async function handle(req: Json): Promise<Json> {
       const session = await ort.InferenceSession.create(req.path, {executionProviders: ['wasm']});
       onnx = onnxEvaluate(session, ort.Tensor);
       reply = {};
+      break;
+    }
+    case 'onnxQuant': {
+      const ort = await import('onnxruntime-web');
+      ort.env.wasm.numThreads = 1;
+      const weights = dequantize(new Uint8Array(readFileSync(req.packed)), req.quant);
+      const expect = new Uint8Array(readFileSync(req.expect));
+      let mismatches = Math.abs(expect.length - weights.length);
+      for (let i = 0; i < Math.min(expect.length, weights.length); i++) mismatches += +(expect[i] !== weights[i]);
+      const session = await ort.InferenceSession.create(new Uint8Array(readFileSync(req.path)), {
+        executionProviders: ['wasm'], externalData: [{path: req.quant.external, data: weights}]});
+      const out = await session.run({
+        planes: new ort.Tensor('float32', Float32Array.from(req.planes), [req.n, R.BOARD, R.BOARD, req.planes.length / (req.n * R.BOARD * R.BOARD)]),
+        features: new ort.Tensor('float32', Float32Array.from(req.features), [req.n, req.features.length / req.n])});
+      reply = {mismatches, value: Array.from(out.value.data as Float32Array), logits: Array.from(out.logits.data as Float32Array)};
       break;
     }
     case 'search': {

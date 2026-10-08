@@ -1,6 +1,7 @@
 import type {SerializedGameState, GameMove} from '@the-duke/engine';
 import {deserialize} from '@the-duke/engine';
-import {findBestMove, pickRandomMove, onnxEvaluate, zeroChooseMove, TimeBudget, type ZeroEvaluate} from '@the-duke/ai';
+import {findBestMove, pickRandomMove, onnxEvaluate, zeroChooseMove, TimeBudget, dequantize, type QuantInfo,
+        type ZeroEvaluate} from '@the-duke/ai';
 
 export interface AIWorkerRequest {
   type: 'findBestMove' | 'pickRandomMove' | 'zeroMove';
@@ -16,14 +17,34 @@ export interface AIWorkerRequest {
 
 // The neural network (training/zero, exported with export_onnx.py), loaded on
 // first use: WebGPU if the browser has it, else WebAssembly on the CPU. Its
-// .json (also from export_onnx.py) has the search settings it was trained with.
-const MODEL_URL = `${import.meta.env.BASE_URL}models/duke-zero.fp16.onnx`;
-const META_URL = `${import.meta.env.BASE_URL}models/duke-zero.json`;
+// .json (also from export_onnx.py) has the search settings it was trained with
+// and names the variant to load: `web`. A quantized variant (q8, q4) is a small
+// graph plus a .bin of packed weights, expanded here to the fp16 weights the
+// graph expects; fp16 (or a .json without `web`) is the plain fp16 model.
+const MODELS = `${import.meta.env.BASE_URL}models/`;
 interface SearchSettings { maxConsidered?: number; maxDepth?: number; valueScale?: number }
+interface ModelMeta {
+  search?: SearchSettings;
+  web?: string;
+  variants?: Record<string, {file: string; packed?: string; quant?: QuantInfo}>;
+}
 let zero: Promise<{evaluate: ZeroEvaluate; search: SearchSettings}> | null = null;
 
+async function fetchBytes(url: string): Promise<Uint8Array> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return new Uint8Array(await r.arrayBuffer());
+}
+
+async function loadModel(meta: ModelMeta): Promise<{model: Uint8Array; externalData?: {path: string; data: Uint8Array}[]}> {
+  const v = meta.web ? meta.variants?.[meta.web] : undefined;
+  if (!v?.packed || !v.quant) return {model: await fetchBytes(`${MODELS}duke-zero.fp16.onnx`)};
+  const [model, packed] = await Promise.all([fetchBytes(MODELS + v.file), fetchBytes(MODELS + v.packed)]);
+  return {model, externalData: [{path: v.quant.external, data: dequantize(packed, v.quant)}]};
+}
+
 async function loadZero(): Promise<{evaluate: ZeroEvaluate; search: SearchSettings}> {
-  const meta: {search?: SearchSettings} = await fetch(META_URL).then(r => (r.ok ? r.json() : {})).catch(() => ({}));
+  const meta: ModelMeta = await fetch(`${MODELS}duke-zero.json`).then(r => (r.ok ? r.json() : {})).catch(() => ({}));
   const search: SearchSettings = meta.search ?? {};   // missing: spec.json defaults
   const ort = await import('onnxruntime-web/all');
   const wasm = await import('onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url');
@@ -32,10 +53,12 @@ async function loadZero(): Promise<{evaluate: ZeroEvaluate; search: SearchSettin
   // Threads need a cross-origin isolated page (COOP/COEP headers).
   ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 1, 8) : 1;
   const t0 = performance.now();
+  const {model, externalData} = await loadModel(meta);
+  console.log(`[AI] network ${meta.web ?? 'fp16'} fetched and unpacked in ${(performance.now() - t0).toFixed(0)}ms`);
   const gpu = 'gpu' in navigator && await (navigator as any).gpu.requestAdapter().catch(() => null);
   for (const name of gpu ? ['webgpu', 'wasm'] : ['wasm']) {
     try {
-      const session = await ort.InferenceSession.create(MODEL_URL, {executionProviders: [name]});
+      const session = await ort.InferenceSession.create(model, {executionProviders: [name], externalData});
       backend = name;
       console.log(`[AI] network loaded on ${name} in ${(performance.now() - t0).toFixed(0)}ms`
         + (name === 'wasm' ? ` (${ort.env.wasm.numThreads} threads)` : ''));

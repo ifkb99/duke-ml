@@ -231,3 +231,34 @@ def test_onnx_search_matches_jax(oracle, search_positions, tmp_path, run):
         if ts['action'] == int(out.action[b]) and np.abs(np.asarray(ts['weights']) - w).max() < 1e-3:
             agree += 1
     assert agree >= len(positions) - 2, f'{agree}/{len(positions)} positions agree'
+
+
+def test_quantized_export_in_typescript(oracle, tmp_path):
+    """The web app's quantized networks: TypeScript (quant.ts) rebuilds the
+    weights bit for bit, and onnxruntime-web gives the same outputs as
+    onnxruntime in Python."""
+    import json
+    import subprocess
+    import sys
+    import onnxruntime as ort
+    from training.zero.tests.conftest import REPO
+    ckpt = REPO / 'runs' / 'az5' / 'ckpt_001600.pkl'
+    if not ckpt.exists():
+        pytest.skip('no az5 checkpoint')
+    subprocess.run([sys.executable, '-m', 'training.zero.export_onnx', str(ckpt), str(tmp_path / 'net')],
+                   cwd=REPO, check=True, capture_output=True)
+    meta = json.loads((tmp_path / 'net.json').read_text())
+    assert meta['web'] == 'q4'
+    chk = meta['check']
+    planes = np.asarray(chk['planes'], np.float32).reshape(chk['n'], R.BOARD, R.BOARD, -1)
+    feats = np.asarray(chk['features'], np.float32).reshape(chk['n'], -1)
+    for name in ('q8', 'q4'):
+        v = meta['variants'][name]
+        got = oracle.ask({'op': 'onnxQuant', 'path': str(tmp_path / v['file']), 'packed': str(tmp_path / v['packed']),
+                          'quant': v['quant'], 'expect': str(tmp_path / v['quant']['external']),
+                          'planes': chk['planes'], 'features': chk['features'], 'n': chk['n']})
+        assert got['mismatches'] == 0, name
+        sess = ort.InferenceSession(str(tmp_path / v['file']), providers=['CPUExecutionProvider'])
+        logits, value = sess.run(None, {'planes': planes, 'features': feats})
+        np.testing.assert_allclose(got['value'], value, atol=2e-3)
+        np.testing.assert_allclose(np.asarray(got['logits']).reshape(logits.shape), logits, atol=2e-2)

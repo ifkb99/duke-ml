@@ -10,6 +10,14 @@ Writes <out>.fp32.onnx, <out>.fp16.onnx (half the size; fast on WebGPU) and
 that layer is most of the parameters), plus <out>.json with sizes and, for real checkpoints, a few
 positions with the expected outputs so the browser can check its results.
 
+For the web app, also <out>.q8.* and <out>.q4.*: the fp16 network with its
+weights stored block-quantized (quantize.py) at 8 bits, or at 4 bits in the
+residual blocks and 8 elsewhere. Each is a small .onnx (the graph, biases and
+norms) whose conv and dense weights live in an external file the browser
+builds from the .bin (packages/ai/src/zero/quant.ts); the .weights file is
+that expanded file, for checking it here and in the tests (not served).
+The browser loads the variant named by `web` in the .json (--web).
+
 The graph is written by hand from the weights (no PyTorch needed) and checked
 against a float32 JAX forward pass. Same inputs and outputs as the network:
   planes   float32 [B, 6, 6, 60]   (env.observe layout, NHWC)
@@ -55,12 +63,12 @@ class Graph:
         return out
 
     # --- layers (activations are NCHW inside the graph) ---
-    def conv(self, x, p):
+    def conv(self, x, p, base='w'):
         w = np.transpose(np.asarray(p['kernel'], np.float32), (3, 2, 0, 1))      # HWIO -> OIHW
         k = w.shape[2]
         # Every attribute spelled out: ONNX has defaults, but onnxruntime-web's
         # WebGPU Conv rejects a node without dilations ("dilations should be 2D").
-        return self.op('Conv', [x, self.const(w, 'w'), self.const(np.asarray(p['bias'], np.float32), 'b')],
+        return self.op('Conv', [x, self.const(w, base), self.const(np.asarray(p['bias'], np.float32), 'b')],
                        kernel_shape=[k, k], strides=[1, 1], dilations=[1, 1], group=1,
                        pads=[k // 2] * 4)
 
@@ -127,8 +135,8 @@ def build(params: dict, blocks: int, policy_head: str = 'dense') -> onnx.ModelPr
     x = g.op('Add', [x, film])
     for i in range(blocks):
         p = params['blocks'][i]
-        y = g.conv(g.relu(g.layernorm_c(x, p['norm1'])), p['conv1'])
-        y = g.conv(g.relu(g.layernorm_c(y, p['norm2'])), p['conv2'])
+        y = g.conv(g.relu(g.layernorm_c(x, p['norm1'])), p['conv1'], 'wb')     # quantized harder
+        y = g.conv(g.relu(g.layernorm_c(y, p['norm2'])), p['conv2'], 'wb')
         x = g.op('Add', [x, y])
     x = g.relu(g.layernorm_c(x, params['norm']))
     pooled = g.op('ReduceMean', [x, g.const(np.array([2, 3], np.int64))], keepdims=0)    # [B, C]
@@ -153,6 +161,44 @@ def build(params: dict, blocks: int, policy_head: str = 'dense') -> onnx.ModelPr
     return model
 
 
+def export_quantized(model: onnx.ModelProto, out: Path, bits: int) -> dict:
+    """<out>.q<bits>.onnx / .bin / .weights (see the module docstring); returns
+    what the browser needs to rebuild the weights, for the .json."""
+    import copy
+    from onnxruntime.transformers.float16 import convert_float_to_float16
+    from training.zero import quantize as Q
+    m = copy.deepcopy(model)
+    packed, expanded, tensors = bytearray(), bytearray(), {}
+    for init in m.graph.initializer:
+        kind = init.name.split('_')[0]
+        if kind not in ('w', 'wb'):
+            continue
+        b = bits if kind == 'wb' else 8
+        q, scales, deq = Q.quantize(numpy_helper.to_array(init), b)
+        init.CopyFrom(numpy_helper.from_array(deq.astype(np.float32), init.name))
+        tensors[init.name] = {'offset': len(packed), 'dst': len(expanded), 'count': int(q.size), 'bits': b}
+        packed += scales.astype('<f2').tobytes() + Q.pack(q, b)
+        expanded += deq.astype('<f2').tobytes()
+    m = convert_float_to_float16(m, keep_io_types=True)
+    location = f'{out.name}.q{bits}.weights'
+    for init in m.graph.initializer:
+        if init.name not in tensors:
+            continue
+        t = tensors[init.name]
+        assert init.data_type == TensorProto.FLOAT16 and init.raw_data == bytes(expanded[t['dst']:t['dst'] + 2 * t['count']]), init.name
+        init.ClearField('raw_data')
+        init.data_location = TensorProto.EXTERNAL
+        for k, v in (('location', location), ('offset', str(t['dst'])), ('length', str(2 * t['count']))):
+            init.external_data.add(key=k, value=v)
+    graph, weights = out.with_name(f'{out.name}.q{bits}.onnx'), out.with_name(f'{out.name}.q{bits}.bin')
+    onnx.save(m, graph)
+    weights.write_bytes(packed)
+    out.with_name(location).write_bytes(expanded)
+    return {'file': graph.name, 'packed': weights.name, 'bytes': graph.stat().st_size + len(packed),
+            'quant': {'block': Q.BLOCK, 'external': location, 'externalBytes': len(expanded),
+                      'tensors': list(tensors.values())}}
+
+
 def sample_inputs(n=8, seed=0):
     """Real positions: from the benchmark if built, else random play."""
     from training.zero import benchmark as BM
@@ -172,6 +218,7 @@ def main():
     p.add_argument('out', type=Path, help='output path prefix, e.g. web/latency/models/az3net')
     p.add_argument('--random', metavar='CxB', help='random weights of this size instead of a checkpoint')
     p.add_argument('--policy-head', default='dense', help="with --random: 'dense' or 'spatial'")
+    p.add_argument('--web', default='q4', choices=['fp16', 'q8', 'q4'], help='the variant the web app loads')
     a = p.parse_args()
 
     if a.random:
@@ -219,17 +266,21 @@ def main():
     i8 = a.out.with_name(a.out.name + '.int8.onnx')
     quantize_dynamic(str(f32), str(i8), weight_type=QuantType.QInt8, op_types_to_quantize=['MatMul'])
 
+    quantized = {f'q{bits}': export_quantized(model, a.out, bits) for bits in (8, 4)}
+
     variants = {}
-    for name, path in (('fp32', f32), ('fp16', f16), ('int8', i8)):
+    for name, path in (('fp32', f32), ('fp16', f16), ('int8', i8), ('q8', None), ('q4', None)):
+        info = quantized[name] if path is None else {'file': path.name, 'bytes': path.stat().st_size}
+        path = path or a.out.with_name(info['file'])
         s = ort.InferenceSession(str(path), providers=['CPUExecutionProvider'])
         lg, v = s.run(None, {'planes': planes, 'features': feats})
         masked = np.where(legal, lg, -np.inf)
         variants[name] = {
-            'file': path.name, 'bytes': path.stat().st_size,
+            **info,
             'max_value_err': float(np.abs(v - want_value).max()),
             'top_move_agrees': float((masked.argmax(1) == np.where(legal, want_logits, -np.inf).argmax(1)).mean()),
         }
-        print(f'  {name}: {path.stat().st_size / 1e6:.1f} MB, value err {variants[name]["max_value_err"]:.3f}, '
+        print(f'  {name}: {info["bytes"] / 1e6:.1f} MB, value err {variants[name]["max_value_err"]:.3f}, '
               f'top move agrees {variants[name]["top_move_agrees"]:.2f}')
 
     n_params = int(sum(np.size(x) for x in jax.tree.leaves(pure)))
@@ -246,7 +297,7 @@ def main():
               'valueScale': run_cfg.get('value_scale', R.SPEC['search']['valueScale'])}
     meta = {'label': label, 'channels': c, 'blocks': b, 'policy_head': head, 'params': n_params,
             'search': search, 'mflops_per_eval': flops / 1e6,
-            'variants': variants,
+            'variants': variants, 'web': a.web,
             'check': {'planes': planes.reshape(-1).tolist(), 'features': feats.reshape(-1).tolist(),
                       'n': int(len(planes)), 'value': want_value.tolist(),
                       'top_move': np.where(legal, want_logits, -np.inf).argmax(1).tolist(),

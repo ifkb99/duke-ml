@@ -620,3 +620,45 @@ teacher for it. Its own ladder read 0.30 for 500 vs 475 right after the
 restart: the replay buffer isn't saved, so for its first iterations after a
 restart it trains on very few games. On both GPUs it does ~44 iterations an
 hour.
+
+## Smaller web download: block-quantized weights (2026-10-08)
+
+The user asked about LittleBit (arXiv 2506.13771, 0.1 bits per weight for
+LLMs via binarized low-rank factors). It doesn't fit here: it relies on huge
+redundant matrices (our largest layer has 83k weights), and its speedup comes
+from memory-bound LLM decoding with custom binary kernels, while our phone
+inference is compute-bound and onnxruntime-web would expand the weights
+anyway. The simpler idea from the same family does fit: store the weights at
+fewer bits and expand them to fp16 when the page loads. The network then runs
+exactly as the fp16 export does, at the same speed; only the download shrinks.
+
+quantize.py: GGML-style blocks of 32 weights sharing an fp16 scale. az5:1600 on
+the 2,100 benchmark positions, float32, against the unquantized network
+(scratchpad q_variants.py; the kept numbers are in runs/quant/results.jsonl):
+
+| weights | size | top move agrees | policy KL | value error, mean / max |
+|---|---|---|---|---|
+| 8 bits | 1.89 MB | 0.996 | 0.00004 | 0.004 / 0.02 |
+| 6 bits | 1.45 | 0.983 | 0.0012 | 0.025 / 0.08 |
+| 5 bits | 1.22 | 0.967 | 0.0048 | 0.029 / 0.13 |
+| 4 bits | 1.00 | 0.932 | 0.0168 | 0.100 / 0.42 |
+| 4 bits, MSE-fitted scales | 1.00 | 0.927 | 0.0166 | 0.105 / 0.41 |
+| 4 bits, blocks of 16 | 1.11 | 0.955 | 0.0091 | 0.068 / 0.29 |
+| **4 bits in the residual blocks, 8 elsewhere** | **1.06** | 0.959 | 0.0061 | **0.015** / 0.10 |
+
+Nearly all of 4-bit's value error comes from the stem and heads, ~7% of the
+weights; keeping those at 8 bits costs 6% of the size. Head to head at 32
+simulations against the unquantized az5:1600: **4-bit mixed 0.498** (W235
+D40 L237, 512 games), **8-bit 0.486** (W119 D11 L126, 256 games): no
+measurable loss.
+
+The web app now loads `duke-zero.q4.onnx` (44 KB: graph, biases, norms) and
+`duke-zero.q4.bin` (1.06 MB, ~0.9 MB gzipped; the Docker build now
+precompresses .onnx and .bin), expanded in packages/ai/src/zero/quant.ts into
+onnxruntime-web's externalData. That's **1.1 MB, down from 3.6 MB** (fp16
+az5) and 6.2 MB (az4). TypeScript rebuilds the fp16 weights bit for bit (test
+`test_quantized_export_in_typescript`). In headless Chromium (WebAssembly, 8
+threads) the built app fetched and unpacked the network in 24 ms and searched
+as before. WebGPU wasn't tested here (no GPU in headless Chromium); the
+external weights are loaded before the backend is chosen, so it should behave
+the same.
