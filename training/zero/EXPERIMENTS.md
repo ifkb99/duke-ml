@@ -639,6 +639,24 @@ tactics 0.554 / 0.589 / 0.516 at 800 / 850 / 900 (noisy), search32 flat at
 ~+20 Elo per 100 iterations against az5, with the learning rate at 1.2e-4
 and 600 iterations of decay left.
 
+Check 2026-10-09, big1:1525 (learning rate at the 3e-5 floor since 1500),
+32 simulations each unless noted:
+
+| big1:1525 vs | games | score | W D L |
+|---|---|---|---|
+| az5:1600 | 256 | **0.666** | 166 9 81 |
+| az5:1600, 128 simulations each | 128 | **0.691** | 88 1 39 |
+| az4:1800 | 128 | 0.707 | 88 5 35 |
+| big1:900 | 256 | 0.703 | 175 10 71 |
+| big1:1200 | 256 | 0.482 | 115 17 124 |
+
+About +120 Elo over az5 (+140 at 128 simulations), so it is now a real
+teacher for it. All of the gain since 900 came by 1200: 1525 vs 1200 is
+level, and the trainer's 64-game ladders read 0.43–0.49 at every step
+after 1100. Raw-policy tactics still crept up (wins kept 0.629 at 1500,
+the best of any network; 0.52–0.59 around 900), and policy loss fell
+0.84 → 0.76, but in play it has plateaued.
+
 ## Smaller web download: block-quantized weights (2026-10-08)
 
 The user asked about LittleBit (arXiv 2506.13771, 0.1 bits per weight for
