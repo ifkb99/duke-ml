@@ -716,3 +716,32 @@ At ~75 Elo per doubling of simulations (az5 vs az4 at equal simulations vs
 equal phone time), it must be ~20 Elo stronger per evaluation to break even
 on a phone. Then a short RL phase on whichever is ahead, and head-to-heads
 against az5:1600 at equal simulations and at equal phone time.
+
+Data: 4.0M positions in 3 h 40 min (~150 positions/s per GPU once warm;
+GPU0 needs MEM_FRACTION 0.85 as the desktop holds 1.75 GB of it). Both
+students, lr 1e-4 (az5 was already trained, so fine-tuning rather than
+3e-4), mirror 0.5, early stopping; each took ~11 min:
+
+| held-out (400k positions) | policy | top-1 | value | best step |
+|---|---|---|---|---|
+| big1:1525 (teacher) | 0.750 | 0.716 | 0.107 | |
+| az6, 96×10 from az5:1600 | 0.817 | 0.693 | 0.109 | 24,576 |
+| az6-12, 96×12 from az5:1600 | 0.817 | 0.693 | 0.110 | 22,528 |
+
+Both reached big1's training loss (0.75) but stopped improving on held-out
+games after ~6 epochs: more data, not more depth, is the limit here.
+
+Head-to-heads (32 simulations unless noted):
+
+| match | games | score | W D L |
+|---|---|---|---|
+| az6 vs az5:1600 | 256 | **0.578** | 142 12 102 |
+| az6-12 vs az5:1600 | 256 | 0.562 | 137 14 105 |
+| az6-12 vs az6 | 256 | 0.463 | 113 11 132 |
+| az6-12@175 vs az6@210 (equal phone time) | 128 | 0.445 | 56 2 70 |
+
+**96×12 doesn't pay:** level with 96×10 per evaluation, so behind at equal
+phone time. az6 (96×10) gets about half of big1's +120 Elo over az5 from
+imitation alone (+55). Next: a short RL phase on az6 (both GPUs, lr 1e-4
+decaying to 3e-5 over 500 iterations), checking it against az6's imitation
+start and az5:1600.
