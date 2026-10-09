@@ -698,3 +698,21 @@ threads) the built app fetched and unpacked the network in 24 ms and searched
 as before. WebGPU wasn't tested here (no GPU in headless Chromium); the
 external weights are loaded before the backend is chosen, so it should behave
 the same.
+
+## az6: big1 distilled into the phone network, 96×10 vs 96×12 (from 2026-10-09)
+
+big1 stopped at 1590 (13:35); **big1:1525** (runs/big1/ckpt_001525.pkl) is
+the teacher. Data: big1 playing itself at 128 simulations, 2M positions per
+GPU into runs/az6-data{0,1} (seeds 10, 11). It runs at ~170-190 positions/s
+per GPU (az4 as teacher: ~350; big1 costs ~8× az4 per evaluation but the
+search overhead is shared), so ~3 h for 4M.
+
+Two students on the same data, one per GPU, both starting from az5:1600
+(`distill.py --init runs/az5/ckpt_001600.pkl`, new): **az6** is 96×10, and
+**az6-12** is 96×12, whose two extra blocks start as the identity (so it
+begins exactly as az5). On a phone 96×12 costs ~19% more per evaluation
+(~150 vs 125 MFLOP) and ~190 KB more download at 4 bits (1.25 vs 1.06 MB).
+At ~75 Elo per doubling of simulations (az5 vs az4 at equal simulations vs
+equal phone time), it must be ~20 Elo stronger per evaluation to break even
+on a phone. Then a short RL phase on whichever is ahead, and head-to-heads
+against az5:1600 at equal simulations and at equal phone time.
