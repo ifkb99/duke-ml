@@ -629,6 +629,16 @@ search the tactics numbers are level with az5. Ladder 600 vs 500 0.66, 700 vs
 600 0.49. Pace ~36 iterations an hour; the learning rate is 1.8e-4, reaching
 the 3e-5 floor at 1500.
 
+Check 2026-10-08 22:00, big1:900 at 32 simulations: vs az5:1600 **0.508**
+(W127 D6 L123, 256 games; ±0.03, so level), vs az4:1800 **0.652** (W82 D3
+L43, 128 games; about +110 Elo, where az5:1400 scored 0.578), vs big1:800
+0.516 (128 games). The trainer's own checks: minimax6 0.92 (0.84 at 700),
+ladders 800 vs 700 0.54 and 900 vs 800 0.45 (64 games each), raw-policy
+tactics 0.554 / 0.589 / 0.516 at 800 / 850 / 900 (noisy), search32 flat at
+~0.75. So big1 has caught az5 but is not clearly past it; still gaining
+~+20 Elo per 100 iterations against az5, with the learning rate at 1.2e-4
+and 600 iterations of decay left.
+
 ## Smaller web download: block-quantized weights (2026-10-08)
 
 The user asked about LittleBit (arXiv 2506.13771, 0.1 bits per weight for
