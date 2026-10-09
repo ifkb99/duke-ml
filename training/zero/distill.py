@@ -22,10 +22,18 @@ and --seed), then train with `--data a.npz b.npz`, which concatenates them.
 --init teacher copies every trunk and value-head weight from the teacher and
 starts only the policy head fresh, so a dense student is the fair control for
 a spatial one: same data, same steps, only the head differs.
+
+--init <checkpoint> starts from another trained network of the same width,
+e.g. the current phone network, to teach it a stronger teacher's play. With
+more --blocks than it has, the extra blocks start as the identity:
+
+    python -m training.zero.distill runs/big1/ckpt_001525.pkl --run az6-12 \
+        --channels 96 --blocks 12 --init runs/az5/ckpt_001600.pkl --data ...
 """
 
 import argparse
 import json
+import pickle
 import time
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -71,6 +79,26 @@ def copy_from_teacher(student, teacher):
     return s
 
 
+def copy_from_checkpoint(student, params):
+    """Student params with every weight taken from a trained network of the same
+    width (`params`, a checkpoint's). A deeper student keeps its extra residual
+    blocks fresh, appended after the trained ones; a fresh block starts as the
+    identity (its last conv is zero), so the student plays exactly as the
+    checkpoint does until it learns to use them."""
+    s = nnx.to_pure_dict(student)
+    assert len(params['blocks']) <= len(s['blocks']), 'the student must be at least as deep'
+    for name in s:
+        if name != 'blocks':
+            assert jax.tree.structure(s[name]) == jax.tree.structure(params[name]), name
+            s[name] = params[name]
+    for i in s['blocks']:
+        if i in params['blocks']:
+            s['blocks'][i] = params['blocks'][i]
+        else:
+            assert not np.any(s['blocks'][i]['conv2']['kernel']), 'a fresh block must start as the identity'
+    return s
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('teacher', type=Path)
@@ -78,7 +106,8 @@ def main():
     p.add_argument('--channels', type=int, help='default: the teacher\'s')
     p.add_argument('--blocks', type=int, help='default: the teacher\'s')
     p.add_argument('--policy-head', default='spatial')
-    p.add_argument('--init', choices=['teacher', 'fresh'], default='teacher')
+    p.add_argument('--init', default='teacher',
+                   help="'teacher', 'fresh', or a checkpoint of the same width to start from")
     p.add_argument('--samples', type=int, default=400_000, help='teacher self-play samples to generate')
     p.add_argument('--games', type=int, default=512, help='parallel self-play games')
     p.add_argument('--simulations', type=int, help='teacher search simulations (default: its training\'s)')
@@ -140,6 +169,10 @@ def main():
     if a.init == 'teacher':
         assert (cfg.channels, cfg.blocks) == (t_cfg.channels, t_cfg.blocks), '--init teacher needs the same trunk'
         nnx.replace_by_pure_dict(params, copy_from_teacher(params, t_params))
+    elif a.init != 'fresh':
+        with open(a.init, 'rb') as f:
+            init_params = pickle.load(f)['params']
+        nnx.replace_by_pure_dict(params, copy_from_checkpoint(params, init_params))
     forward = make_forward(graphdef)
     tx = T.make_optimizer(cfg)
     opt_state = tx.init(params)
