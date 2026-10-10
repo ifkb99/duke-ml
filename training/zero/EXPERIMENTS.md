@@ -821,3 +821,54 @@ Matches, 1024 games, 32 simulations (±0.015):
 - Exported to runs/web-models/az7-drop (q4 1.06 MB). The ONNX check must run
   JAX on the CPU (`JAX_PLATFORMS=cpu`): on the GPU, TF32 matmuls put the
   reference 0.02 off and the 1e-3 assert fails.
+
+## Phone: az7-drop in the web app, threads and WebGPU (2026-10-10)
+
+az7-drop is the web app's model (q4, 1.06 MB). On the user's phone (Android
+10, Chrome 155) "vs Neural Net" hung on creating the ORT session, on WebGPU
+and wasm alike: ORT's threads are workers inside the AI worker, and Android
+Chrome never starts them. One thread fixes it and costs nothing: the search
+sends a few positions per call, too few for threads. Phone reports are in
+tools/latency/results/2026-10-10T*-neural-*.json (`?report` now also sends
+the worker's log; `?backend=wasm|webgpu`, `?threads=N` override).
+
+Batch sizes of the search (40 positions, flat network): at 400 simulations
+42% of evaluations are in batches of 1–2, 22% in 3–4, 36% in 5–16. So the
+worker now opens both backends, times them (ms per call on the phone):
+
+| positions | 1 | 2 | 4 | 8 | 16 |
+|---|---|---|---|---|---|
+| wasm, 1 thread | 13 | 23 | 44 | 85 | 169 |
+| WebGPU | 32 | 29 | 30 | 26 | 43 |
+
+and sends batches of 3+ to WebGPU (padded to a power of two): ~5.4 ms per
+simulation in steady play vs ~6.0 on the CPU alone, at a one-off ~2 s
+calibration on the first move.
+
+## Next steps (2026-10-10)
+
+Training:
+- **16M big1 positions** (another 8M, ~7 h on both GPUs), then the az7-drop
+  recipe. 4M → 8M gave ~+20 Elo, the lr drops ~+10 more; expect a bit less
+  per doubling.
+- **Deeper teacher search** for the targets (256 simulations instead of 128):
+  slower data, stronger targets; test on a 4M slice against az7-drop.
+- **Depthwise-separable (MobileNet-style) blocks** for older phones, distilled
+  from big1: fewer FLOPs per evaluation, judged at equal phone time.
+- **A stronger teacher**: big1 plateaued from iteration ~1200 at its lr floor;
+  a learning-rate restart or more simulations in its self-play may move it.
+- training/zero/evaluator.py has never been run.
+
+Web app:
+- **Draw moves take two full budgets** (~6 s on the phone): deciding to draw
+  and placing the tile are separate searches, each with 3 s. Split the budget.
+- **TimeBudget undershoots**: steady moves use 2.0–2.9 s of 3 s; the speed
+  estimate lags as positions get cheaper.
+- **Cache the calibration** per device (localStorage), skipping the ~2 s on
+  later visits.
+- **Bigger batches** would let WebGPU do more of the work, but the search
+  batches only where the result can't change (parity with the JAX search);
+  anything else needs its own strength test.
+- **Production**: COOP/COEP headers are no longer needed (one thread); still
+  serve the 28 MB jsep wasm gzipped (6.7 MB); difficulty levels; test on iOS
+  Safari and an older Android phone.
