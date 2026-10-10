@@ -785,3 +785,39 @@ positions, so: 4M more big1:1525 positions at 128 simulations
   restore).
 
 Each against az6 and az5:1600 over 1024 games.
+
+### Results (2026-10-10 01:20–02:10)
+
+Both trained on 8M positions (~20 min for az7, ~33 min for az7-drop on one
+GPU each). Held-out games here are 5% of the 8M, so not comparable to az6's.
+
+| student | stops at | held-out loss | policy (top-1) | value |
+|---|---|---|---|---|
+| az7 | step 49152 | 0.902 | 0.793 (0.701) | 0.109 |
+| az7-drop | step 88064 (rewinds to 47104 at 3e-5, 71680 at 9e-6) | **0.892** | 0.784 (0.705) | 0.108 |
+| big1:1525 (the teacher) | | | 0.745 (0.718) | 0.108 |
+
+Matches, 1024 games, 32 simulations (±0.015):
+
+| match | score | W D L |
+|---|---|---|
+| az7 vs az6 | 0.527 | 515 50 459 |
+| **az7-drop vs az6** | **0.554** | 544 46 434 |
+| az7-drop vs az7 | 0.517 | 503 53 468 |
+| az7-drop vs az5:1600 | 0.627 | 625 34 365 |
+| az7-drop-q4 vs az6-q4 (what phones run) | 0.582 | 574 43 407 |
+| az7-drop-q4 vs az5-q4 | 0.582 | 569 53 402 |
+| az7-drop-q4 vs az7-drop | 0.487 | 473 52 499 |
+| az6-q4 vs az6 | 0.474 | 460 51 513 |
+
+- **The extra data alone is worth ~+20 Elo** (az7 vs az6, ~2 SE), the lr drops
+  another ~+10 (az7-drop vs az7, ~1 SE); together ~+38 over az6 (~3.5 SE) and
+  ~+90 over az5, consistent with az6 being ~+38 over az5.
+- The drops kept improving the held-out loss after plain early stopping would
+  have quit (0.902 → 0.892): the plateau was the step size, not only the data.
+- 4-bit drifts a little more than az6's (benchmark value MAE 0.037 vs 0.020,
+  top-1 agreement 0.938 vs 0.947) but costs about the same in play (~−10 to −18
+  Elo each), and az7-drop-q4 beats az6-q4 0.582.
+- Exported to runs/web-models/az7-drop (q4 1.06 MB). The ONNX check must run
+  JAX on the CPU (`JAX_PLATFORMS=cpu`): on the GPU, TF32 matmuls put the
+  reference 0.02 off and the 1e-3 assert fails.
