@@ -124,6 +124,9 @@ class Config:
     imitation_holdout: float = 0.1 # fraction of minimax games held out
     imitation_check_every: int = 128
     imitation_patience: int = 3    # checks without improvement before stopping
+    imitation_lr_drops: int = 0    # instead of stopping, go back to the best step and
+                                   # cut the lr by imitation_lr_factor, this many times
+    imitation_lr_factor: float = 0.3
     imitation_value_weight: float = 0.0  # 0 = warm-start the policy only: a value head
                                    # fit to 3k minimax games just memorizes them (az1/az2)
     # evaluation / bookkeeping
@@ -395,7 +398,12 @@ def game_ids(samples) -> np.ndarray:
 
 
 def imitate(cfg, samples, params, opt_state, train_steps_fn, loss_eval, learner, np_rng, log):
-    """Supervised warm-start with early stopping on held-out games."""
+    """Supervised warm-start with early stopping on held-out games.
+
+    With cfg.imitation_lr_drops, running out of patience first sends training
+    back to the best step so far with the learning rate cut by
+    cfg.imitation_lr_factor (as Keras' ReduceLROnPlateau, plus the restore);
+    it stops when it runs out of patience with no drops left."""
     gid = game_ids(samples)
     held = gid >= int(round((gid.max() + 1) * (1 - cfg.imitation_holdout)))
     train = RP.Replay(int((~held).sum()))
@@ -415,7 +423,7 @@ def imitate(cfg, samples, params, opt_state, train_steps_fn, loss_eval, learner,
 
     chunk = cfg.steps_per_call
     best = (float('inf'), params, opt_state, 0)
-    bad = 0
+    bad, drops, lr = 0, 0, cfg.lr
     avg = MetricAverager()
     for step in range(chunk, cfg.imitation_steps + 1, chunk):
         batches = jax.device_put(sample_stacked(train, chunk, cfg.batch, np_rng, cfg.mirror), learner)
@@ -435,7 +443,12 @@ def imitate(cfg, samples, params, opt_state, train_steps_fn, loss_eval, learner,
             else:
                 bad += 1
                 if bad >= cfg.imitation_patience:
-                    break
+                    if drops >= cfg.imitation_lr_drops:
+                        break
+                    drops, bad, lr = drops + 1, 0, lr * cfg.imitation_lr_factor
+                    params, opt_state = best[1], with_learning_rate(best[2], lr)
+                    log(f'imitation: back to step {best[3]}, lr {lr:.1e}', kind='imitation_lr_drop',
+                        step=step, back_to=best[3], lr=lr)
     log(f'imitation: keeping step {best[3]} (held-out loss {best[0]:.3f})')
     return best[1], best[2]
 

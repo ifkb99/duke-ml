@@ -273,6 +273,42 @@ def test_imitation_early_stopping(samples):
     assert jax.tree.structure(p) == jax.tree.structure(params)
 
 
+def test_imitation_lr_drops(samples):
+    """On a plateau: back to the best step with the lr cut, then stop once the
+    drops are used up. Held-out losses are scripted; params count the steps."""
+    _, params, _ = _tiny()
+    cfg = T.Config(batch=64, steps_per_call=4, imitation_steps=400, imitation_check_every=4,
+                   imitation_patience=2, imitation_holdout=0.3, lr=1e-3,
+                   imitation_lr_drops=2, imitation_lr_factor=0.5)
+    tx = T.make_optimizer(cfg)
+    held = iter([1.0, 0.9, 0.95, 0.95,          # best at check 2 (step 8), then a plateau
+                 0.8, 0.85, 0.85,               # after drop 1: best at step 20, plateau
+                 0.9, 0.9])                     # after drop 2: no gain, stop
+    lrs, steps_in = [], []
+    leaf0 = jax.tree.leaves(params)[0]
+
+    def train_steps(p, o, batches):
+        lrs.append(float(o[1].hyperparams['learning_rate']))
+        steps_in.append(int(np.round(float((jax.tree.leaves(p)[0] - leaf0).ravel()[0]))) * 4)
+        return jax.tree.map(lambda x: x + 1, p), o, {'policy_loss': jnp.zeros(()), 'value_loss': jnp.zeros(())}
+
+    loss = lambda p, b: {'policy_loss': next(held), 'value_loss': 0.0}
+    logged = []
+    T.imitate(cfg, samples, params, tx.init(params), train_steps, loss, jax.devices()[0],
+              np.random.default_rng(0), lambda msg, **rec: logged.append((msg, rec)))
+    drops = [rec for _, rec in logged if rec.get('kind') == 'imitation_lr_drop']
+    assert [d['back_to'] for d in drops] == [8, 20]
+    assert [d['lr'] for d in drops] == pytest.approx([5e-4, 2.5e-4])
+    assert lrs == pytest.approx([1e-3] * 4 + [5e-4] * 3 + [2.5e-4] * 2)   # float32 in the state
+    # SGD steps in the params each call starts from (4 per call): after a drop,
+    # training resumes from the best check's params. The step counter runs on,
+    # so the best check after drop 1 is "step 20" with 12 steps in its params.
+    assert steps_in == [0, 4, 8, 12, 8, 12, 16, 12, 16]
+    assert logged[-1][0].startswith('imitation: keeping step 20')
+    with pytest.raises(StopIteration):
+        next(held)
+
+
 # ---------------------------------------------------------------------------
 # Learning-rate schedule and playout cap randomization
 # ---------------------------------------------------------------------------

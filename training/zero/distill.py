@@ -118,6 +118,9 @@ def main():
     p.add_argument('--steps', type=int, default=20_000, help='maximum SGD steps (stops early)')
     p.add_argument('--check-every', type=int, default=256, help='SGD steps between held-out checks')
     p.add_argument('--patience', type=int, default=4, help='held-out checks without improvement before stopping')
+    p.add_argument('--lr-drops', type=int, default=0,
+                   help='on a plateau, go back to the best step and cut the lr (x --lr-factor) this many times before stopping')
+    p.add_argument('--lr-factor', type=float, default=0.3)
     p.add_argument('--lr', type=float, default=3e-4)
     p.add_argument('--seed', type=int, default=0)
     a = p.parse_args()
@@ -139,6 +142,7 @@ def main():
                   channels=a.channels or t_cfg.channels, blocks=a.blocks or t_cfg.blocks,
                   policy_head=a.policy_head, imitation_steps=a.steps, imitation_value_weight=1.0,
                   imitation_check_every=min(a.check_every, a.steps), imitation_patience=a.patience,
+                  imitation_lr_drops=a.lr_drops, imitation_lr_factor=a.lr_factor,
                   mirror=a.mirror)
     log(f'start (commit {T.git_commit()})', kind='start', commit=T.git_commit(), distill=True,
         teacher=str(a.teacher), teacher_iteration=t_ckpt['iteration'], init=a.init,
