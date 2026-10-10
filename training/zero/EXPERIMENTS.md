@@ -745,3 +745,29 @@ phone time. az6 (96×10) gets about half of big1's +120 Elo over az5 from
 imitation alone (+55). Next: a short RL phase on az6 (both GPUs, lr 1e-4
 decaying to 3e-5 over 500 iterations), checking it against az6's imitation
 start and az5:1600.
+
+### az6 RL hurts; the imitation network is the one (2026-10-09 evening)
+
+RL from az6's imitation start (both GPUs, lr 1e-4 → 3e-5 over 500
+iterations, ~107 iterations/h) made it worse, 256 games each at 32
+simulations: az6:200 vs its start **0.410**, az6:275 vs its start **0.426**,
+az6:275 vs az5:1600 0.492. Stopped at 285 (checkpoints in runs/az6-rl). Its
+own targets (mostly 32-simulation searches by a 96×10 network) are weaker
+than big1's 128-simulation ones, so self-play pulls it back to the level a
+96×10 network's self-play sustains, which is where az5 ended. For a small
+network the teacher's ceiling is higher than self-play's.
+
+The first az6 vs az5 match (0.578, 256 games) was on the lucky side. Bigger
+matches, az6 = runs/az6/imitation_start.pkl:
+
+| match | games | score | W D L |
+|---|---|---|---|
+| az6 vs az5:1600, 32 simulations (seed 5) | 1024 | **0.558** | 551 41 432 |
+| az6 vs az5:1600, 128 simulations each | 512 | **0.546** | 274 11 227 |
+| az6-q4 vs az5-q4 (what phones run), 32 simulations | 1024 | **0.545** | 540 36 448 |
+| az6-q4 vs az5-q4, first try | 512 | 0.509 | 250 21 241 |
+| az6-q4 vs az6 | 512 | 0.488 | 242 16 254 |
+
+So az6 is about +30–40 Elo over az5, at the same size and speed; 4 bits costs
+it about as little as it cost az5 (top-1 agrees 0.947 vs az5's 0.959, value
+MAE 0.020 vs 0.015). Exported to runs/web-models/az6-0 (q4 1.06 MB).
