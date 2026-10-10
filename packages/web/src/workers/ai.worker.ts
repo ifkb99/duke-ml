@@ -1,7 +1,7 @@
 import type {SerializedGameState, GameMove} from '@the-duke/engine';
 import {deserialize} from '@the-duke/engine';
 import {findBestMove, pickRandomMove, onnxEvaluate, zeroChooseMove, TimeBudget, dequantize, type QuantInfo,
-        type ZeroEvaluate} from '@the-duke/ai';
+        type ZeroEvaluate, routeByBatchSize, findCrossover, toZeroState} from '@the-duke/ai';
 
 export interface AIWorkerRequest {
   type: 'findBestMove' | 'pickRandomMove' | 'zeroMove';
@@ -47,7 +47,7 @@ async function loadModel(meta: ModelMeta): Promise<{model: Uint8Array; externalD
   return {model, externalData: [{path: v.quant.external, data: dequantize(packed, v.quant)}]};
 }
 
-async function loadZero(only?: string, threads?: number): Promise<{evaluate: ZeroEvaluate; search: SearchSettings}> {
+async function loadZero(first: SerializedGameState, only?: string, threads?: number): Promise<{evaluate: ZeroEvaluate; search: SearchSettings}> {
   const meta: ModelMeta = await fetch(`${MODELS}duke-zero.json`).then(r => (r.ok ? r.json() : {})).catch(() => ({}));
   const search: SearchSettings = meta.search ?? {};   // missing: spec.json defaults
   const ort = await import('onnxruntime-web/all');
@@ -63,20 +63,41 @@ async function loadZero(only?: string, threads?: number): Promise<{evaluate: Zer
   const t0 = performance.now();
   const {model, externalData} = await loadModel(meta);
   console.log(`[AI] network ${meta.web ?? 'fp16'} fetched and unpacked in ${(performance.now() - t0).toFixed(0)}ms`);
-  const gpu = 'gpu' in navigator && await (navigator as any).gpu.requestAdapter().catch(() => null);
-  for (const name of only ? [only] : gpu ? ['webgpu', 'wasm'] : ['wasm']) {
+  async function open(name: string): Promise<ZeroEvaluate | null> {
     try {
       console.log(`[AI] creating a session on ${name}`);
       const session = await ort.InferenceSession.create(model, {executionProviders: [name], externalData});
-      backend = name;
       console.log(`[AI] network loaded on ${name} in ${(performance.now() - t0).toFixed(0)}ms`
         + (name === 'wasm' ? ` (${ort.env.wasm.numThreads} threads)` : ''));
-      return {evaluate: onnxEvaluate(session, ort.Tensor), search};
+      return onnxEvaluate(session, ort.Tensor);
     } catch (err) {
       console.warn(`[AI] ${name} failed`, err);
+      return null;
     }
   }
-  throw new Error('could not load the neural network');
+  const hasGpu = !only && 'gpu' in navigator && await (navigator as any).gpu.requestAdapter().catch(() => null);
+  const cpu = only === 'webgpu' ? null : await open('wasm');
+  const gpu = only === 'webgpu' || hasGpu ? await open('webgpu') : null;
+  if (!cpu || !gpu) {
+    backend = cpu ? 'wasm' : 'webgpu';
+    const evaluate = cpu ?? gpu;
+    if (!evaluate) throw new Error('could not load the neural network');
+    return {evaluate, search};
+  }
+  // Both: the search's batches are mostly 1-4 positions, which the CPU does
+  // faster, but some are up to 16, where WebGPU's fixed cost per call pays off.
+  // Time both on this device and send each batch to the faster one.
+  const t1 = performance.now();
+  const c = await findCrossover(cpu, gpu, toZeroState(first));
+  const fmt = (ms: Record<number, number>) => Object.entries(ms).map(([n, t]) => `${n}:${t.toFixed(0)}`).join(' ');
+  console.log(`[AI] calibrated in ${(performance.now() - t1).toFixed(0)}ms, ms per call by batch size: `
+    + `wasm ${fmt(c.small)} | webgpu ${fmt(c.large)} => webgpu from ${c.minBatch} positions`);
+  if (c.minBatch === Infinity) {
+    backend = 'wasm';
+    return {evaluate: cpu, search};
+  }
+  backend = c.minBatch === 1 ? 'webgpu' : `wasm+webgpu>=${c.minBatch}`;
+  return {evaluate: routeByBatchSize(cpu, gpu, c.minBatch), search};
 }
 
 export interface AIWorkerResponse {
@@ -119,7 +140,7 @@ async function zeroMove(serialized: SerializedGameState, simulations: number | u
   const firstMove = zero === null;
   reporting = report;
   if (firstMove) console.log(`[AI] loading the network${only ? ` (${only} only)` : ''}${threads ? `, ${threads} threads` : ''}`);
-  zero ??= loadZero(only, threads);
+  zero ??= loadZero(serialized, only, threads);
   zero.catch(() => { zero = null; });   // let a later move retry
   const {evaluate, search} = await zero;
   const loadMs = firstMove ? performance.now() - t0 : 0;
