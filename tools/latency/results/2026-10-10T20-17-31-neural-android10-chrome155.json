@@ -1,0 +1,232 @@
+{
+ "session": "2026-10-10T20-17-31-neural",
+ "env": {
+  "browser": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Mobile Safari/537.36",
+  "threads": 7,
+  "isolated": true
+ },
+ "results": [
+  {
+   "turn": 2,
+   "budgetMs": 3000,
+   "backend": "wasm+webgpu>=3",
+   "loadMs": 3257.7949998378754,
+   "value": -0.19373579758864182,
+   "rootValue": -0.2064208984375,
+   "simulations": 64,
+   "evaluations": 55,
+   "batches": 26,
+   "ms": 427.5149998664856,
+   "move": {
+    "type": "move",
+    "from": {
+     "row": 5,
+     "col": 3
+    },
+    "to": {
+     "row": 4,
+     "col": 3
+    }
+   }
+  },
+  {
+   "turn": 4,
+   "budgetMs": 3000,
+   "backend": "wasm+webgpu>=3",
+   "loadMs": 0,
+   "value": -0.23975360576923077,
+   "rootValue": -0.2039794921875,
+   "simulations": 64,
+   "evaluations": 59,
+   "batches": 26,
+   "ms": 597.6499998569489,
+   "move": {
+    "type": "move",
+    "from": {
+     "row": 4,
+     "col": 3
+    },
+    "to": {
+     "row": 3,
+     "col": 2
+    }
+   }
+  },
+  {
+   "turn": 6,
+   "budgetMs": 3000,
+   "backend": "wasm+webgpu>=3",
+   "loadMs": 0,
+   "value": -0.21917658039693083,
+   "rootValue": -0.1739501953125,
+   "simulations": 676,
+   "evaluations": 499,
+   "batches": 265,
+   "ms": 5374.799999952316,
+   "drewTile": "Seer",
+   "move": {
+    "type": "place",
+    "tileName": "Seer",
+    "position": {
+     "row": 4,
+     "col": 2
+    }
+   }
+  },
+  {
+   "turn": 8,
+   "budgetMs": 3000,
+   "backend": "wasm+webgpu>=3",
+   "loadMs": 0,
+   "value": -0.22315150183887528,
+   "rootValue": -0.11932373046875,
+   "simulations": 358,
+   "evaluations": 288,
+   "batches": 102,
+   "ms": 2240.539999961853,
+   "move": {
+    "type": "move",
+    "from": {
+     "row": 3,
+     "col": 2
+    },
+    "to": {
+     "row": 2,
+     "col": 2
+    }
+   }
+  },
+  {
+   "turn": 10,
+   "budgetMs": 3000,
+   "backend": "wasm+webgpu>=3",
+   "loadMs": 0,
+   "value": -0.1877733998182344,
+   "rootValue": -0.070556640625,
+   "simulations": 409,
+   "evaluations": 341,
+   "batches": 119,
+   "ms": 2591.7949998378754,
+   "move": {
+    "type": "move",
+    "from": {
+     "row": 4,
+     "col": 2
+    },
+    "to": {
+     "row": 2,
+     "col": 2
+    }
+   }
+  },
+  {
+   "turn": 12,
+   "budgetMs": 3000,
+   "backend": "wasm+webgpu>=3",
+   "loadMs": 0,
+   "value": 0.04362295324152163,
+   "rootValue": 0.171142578125,
+   "simulations": 439,
+   "evaluations": 329,
+   "batches": 123,
+   "ms": 2053.125,
+   "move": {
+    "type": "move",
+    "from": {
+     "row": 5,
+     "col": 2
+    },
+    "to": {
+     "row": 5,
+     "col": 3
+    }
+   }
+  },
+  {
+   "turn": 14,
+   "budgetMs": 3000,
+   "backend": "wasm+webgpu>=3",
+   "loadMs": 0,
+   "value": 0.14312737534355333,
+   "rootValue": 0.2003173828125,
+   "simulations": 1083,
+   "evaluations": 877,
+   "batches": 373,
+   "ms": 6327.59500002861,
+   "drewTile": "Bowman",
+   "move": {
+    "type": "place",
+    "tileName": "Bowman",
+    "position": {
+     "row": 4,
+     "col": 3
+    }
+   }
+  },
+  {
+   "turn": 16,
+   "budgetMs": 3000,
+   "backend": "wasm+webgpu>=3",
+   "loadMs": 0,
+   "value": 0.10245632599733152,
+   "rootValue": 0.1602783203125,
+   "simulations": 498,
+   "evaluations": 398,
+   "batches": 126,
+   "ms": 2259.305000066757,
+   "move": {
+    "type": "move",
+    "from": {
+     "row": 4,
+     "col": 3
+    },
+    "to": {
+     "row": 3,
+     "col": 3
+    }
+   }
+  },
+  {
+   "turn": 18,
+   "budgetMs": 3000,
+   "backend": "wasm+webgpu>=3",
+   "loadMs": 0,
+   "value": 0.08391704793973627,
+   "rootValue": 0.1971435546875,
+   "simulations": 568,
+   "evaluations": 491,
+   "batches": 161,
+   "ms": 2923.2400000095367,
+   "move": {
+    "type": "move",
+    "from": {
+     "row": 5,
+     "col": 3
+    },
+    "to": {
+     "row": 1,
+     "col": 3
+    }
+   }
+  }
+ ],
+ "log": [
+  "4.9s log: [AI] loading the network",
+  "5.3s log: [AI] network q4 fetched and unpacked in 111ms",
+  "5.3s log: [AI] creating a session on wasm",
+  "6.0s log: [AI] network loaded on wasm in 840ms (1 threads)",
+  "6.0s log: [AI] creating a session on webgpu",
+  "6.1s log: [AI] network loaded on webgpu in 936ms",
+  "8.2s log: [AI] calibrated in 2099ms, ms per call by batch size: wasm 1:13 2:23 4:44 8:85 16:169 | webgpu 1:32 2:29 4:30 8:26 16:43 => webgpu from 3 positions",
+  "8.6s log: [AI] neural: 64 sims, 55 evals in 26 batches, 428ms, value -0.19",
+  "10.6s log: [AI] neural: 64 sims, 59 evals in 26 batches, 598ms, value -0.24",
+  "23.2s log: [AI] neural: 676 sims, 499 evals in 265 batches, 5375ms, value -0.22, drew Seer",
+  "32.9s log: [AI] neural: 358 sims, 288 evals in 102 batches, 2241ms, value -0.22",
+  "38.0s log: [AI] neural: 409 sims, 341 evals in 119 batches, 2592ms, value -0.19",
+  "48.0s log: [AI] neural: 439 sims, 329 evals in 123 batches, 2053ms, value 0.04",
+  "63.0s log: [AI] neural: 1083 sims, 877 evals in 373 batches, 6328ms, value 0.14, drew Bowman",
+  "70.0s log: [AI] neural: 498 sims, 398 evals in 126 batches, 2259ms, value 0.10",
+  "77.1s log: [AI] neural: 568 sims, 491 evals in 161 batches, 2923ms, value 0.08"
+ ],
+ "client": "192.168.40.132"
+}

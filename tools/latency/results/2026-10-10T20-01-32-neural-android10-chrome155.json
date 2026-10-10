@@ -1,0 +1,89 @@
+{
+ "session": "2026-10-10T20-01-32-neural",
+ "env": {
+  "browser": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Mobile Safari/537.36",
+  "threads": 7,
+  "isolated": true
+ },
+ "results": [
+  {
+   "turn": 2,
+   "budgetMs": 3000,
+   "backend": "wasm",
+   "loadMs": 2921.2000000476837,
+   "value": -0.19374612661508414,
+   "rootValue": -0.2064208984375,
+   "simulations": 64,
+   "evaluations": 55,
+   "batches": 26,
+   "ms": 732.954999923706,
+   "move": {
+    "type": "move",
+    "from": {
+     "row": 5,
+     "col": 3
+    },
+    "to": {
+     "row": 4,
+     "col": 3
+    }
+   }
+  },
+  {
+   "turn": 4,
+   "budgetMs": 3000,
+   "backend": "wasm",
+   "loadMs": 0,
+   "value": -0.23922377366286054,
+   "rootValue": -0.2039794921875,
+   "simulations": 64,
+   "evaluations": 59,
+   "batches": 26,
+   "ms": 462.2150001525879,
+   "move": {
+    "type": "move",
+    "from": {
+     "row": 4,
+     "col": 3
+    },
+    "to": {
+     "row": 3,
+     "col": 2
+    }
+   }
+  },
+  {
+   "turn": 6,
+   "budgetMs": 3000,
+   "backend": "wasm",
+   "loadMs": 0,
+   "value": 0.04662886169031082,
+   "rootValue": 0.10198974609375,
+   "simulations": 416,
+   "evaluations": 360,
+   "batches": 140,
+   "ms": 2500.2850000858307,
+   "move": {
+    "type": "move",
+    "from": {
+     "row": 5,
+     "col": 1
+    },
+    "to": {
+     "row": 4,
+     "col": 1
+    }
+   }
+  }
+ ],
+ "log": [
+  "6.7s log: [AI] loading the network (wasm only), 1 threads",
+  "7.2s log: [AI] network q4 fetched and unpacked in 138ms",
+  "7.2s log: [AI] creating a session on wasm",
+  "9.7s log: [AI] network loaded on wasm in 2628ms (1 threads)",
+  "10.4s log: [AI] neural: 64 sims, 55 evals in 26 batches, 733ms, value -0.19",
+  "39.9s log: [AI] neural: 64 sims, 59 evals in 26 batches, 462ms, value -0.24",
+  "58.6s log: [AI] neural: 416 sims, 360 evals in 140 batches, 2500ms, value 0.05"
+ ],
+ "client": "192.168.40.132"
+}

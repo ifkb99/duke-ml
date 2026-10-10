@@ -6,6 +6,7 @@ import {
   resetInstanceCounter,
 } from '@the-duke/engine';
 import { pickRandomMove, findBestMove, evaluate } from '../src/index.js';
+import { scoreRootMoves, ttClear } from '../src/minimax.js';
 
 function makeState(overrides: Partial<GameState> = {}): GameState {
   return {
@@ -168,5 +169,24 @@ describe('findBestMove', () => {
     // No tiles on board, no bag → no moves
     const result = findBestMove(state, 2);
     expect(result.move).toBeNull();
+  });
+});
+
+
+describe('scoreRootMoves', () => {
+  it('scores every legal move, and the best score is what findBestMove finds', () => {
+    let state = setupGame();
+    for (let ply = 0; ply < 12 && state.status === 'active'; ply++) {
+      ttClear();
+      const scored = scoreRootMoves(state, 3);
+      const best = Math.max(...scored.moves.map(m => m.score), scored.draw ?? -Infinity);
+      ttClear();
+      const found = findBestMove(state, 3);
+      // P1 maximizes: compare from P1's point of view.
+      if (state.currentPlayer === 'P1') expect(best).toBeCloseTo(found.score, 6);
+      else expect(Math.min(...scored.moves.map(m => m.score), scored.draw ?? Infinity)).toBeCloseTo(found.score, 6);
+      expect(scored.moves.length).toBeGreaterThan(0);
+      state = applyMove(state, pickRandomMove(state)!);
+    }
   });
 });

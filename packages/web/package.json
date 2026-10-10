@@ -9,8 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@the-duke/engine": "*",
     "@the-duke/ai": "*",
+    "@the-duke/engine": "*",
+    "onnxruntime-web": "^1.30.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

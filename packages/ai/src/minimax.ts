@@ -476,4 +476,41 @@ export function findBestMove(state: GameState, maxDepth = 6): MinimaxResult {
   return {move: bestMove, score: bestScore, nodesSearched: stats.nodes};
 }
 
+export interface ScoredMoves {
+  /** Every legal board move with its exact score at `depth` (P1's perspective). */
+  moves: {move: GameMove; score: number}[];
+  /** Expected score of drawing a tile (P1's perspective), or null if drawing isn't possible. */
+  draw: number | null;
+  nodesSearched: number;
+}
+
+/**
+ * Exact minimax score of EVERY root move, not just the best one, for
+ * benchmarking how much worse another player's choice is. Each root move gets
+ * a full-window search (no root alpha-beta cutoffs), after a normal search one
+ * ply shallower has warmed the transposition table for move ordering.
+ */
+export function scoreRootMoves(state: GameState, depth = 6): ScoredMoves {
+  const allMoves = generatePseudoLegalMoves(state);
+  if (allMoves.length === 0) return {moves: [], draw: null, nodesSearched: 0};
+  if (depth > 1) findBestMove(state, depth - 1);
+
+  const maximizing = state.currentPlayer === 'P1';
+  const mover = state.currentPlayer;
+  const stats = {nodes: 0};
+  const rootHash = hashState(state);
+  const {boardMoves, drawOutcomes} = splitMoves(allMoves, state);
+
+  const moves: {move: GameMove; score: number}[] = [];
+  for (const move of boardMoves) {
+    clearKillers();
+    const score = applyAndSearch(state, move, mover, depth - 1, -Infinity, Infinity, !maximizing, rootHash, stats, true);
+    if (score !== null) moves.push({move, score});
+  }
+  const draw = drawOutcomes.length > 0
+    ? evaluateChanceNode(drawOutcomes, state, mover, depth, maximizing, rootHash, stats)
+    : null;
+  return {moves, draw, nodesSearched: stats.nodes};
+}
+
 export { ttClear };

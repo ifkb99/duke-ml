@@ -21,3 +21,8 @@ export {
   STATE_TENSOR_SIZE,
   TOTAL_ACTIONS,
 } from './encoding.js';
+export { chooseMove as zeroChooseMove, TimeBudget, type ZeroPlayerOptions, type ZeroMoveInfo } from './zero/player.js';
+export { onnxEvaluate, routeByBatchSize, findCrossover, type Crossover } from './zero/onnx.js';
+export { fromGameState as toZeroState } from './zero/bridge.js';
+export { dequantize, type QuantInfo } from './zero/quant.js';
+export type { Evaluate as ZeroEvaluate } from './zero/search.js';

@@ -1,0 +1,25 @@
+{
+  "_comment": "Constants shared by the JAX training code (training/zero) and the TypeScript port (packages/ai/src/zero). Change them here only. Tile definitions come from the engine (training/zero/tiles.json is exported from it).",
+  "env": {
+    "_comment": "maxPly: turns before a game is a draw. pending: no tile in hand / a draw not yet revealed. bagFeatureScale: bag counts are divided by this in the network input.",
+    "maxPly": 200,
+    "pendingNone": -1,
+    "pendingDrawing": -2,
+    "bagFeatureScale": 3
+  },
+  "actions": {
+    "_comment": "Direction order in the action numbering: commands use dirs8 (source, destination), placements use dirs4. (dRow, dCol) in the canonical frame.",
+    "dirs8": [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]],
+    "dirs4": [[-1, 0], [1, 0], [0, -1], [0, 1]]
+  },
+  "search": {
+    "_comment": "Defaults for training and the browser; an exported model's .json records the settings its run used. valueScale and maxvisitInit: completed-Q weight (50 + max visits) * valueScale. chanceTieTolerance: chance outcomes this close count as tied (lowest outcome wins). valueScale is pi/10: anything from 0.2 to 1.0 beat 0.1 (EXPERIMENTS.md, value_scale sweep).",
+    "simulations": 32,
+    "maxConsidered": 16,
+    "maxDepth": 16,
+    "valueScale": 0.3141592653589793,
+    "maxvisitInit": 50,
+    "rescaleEpsilon": 1e-8,
+    "chanceTieTolerance": 1e-6
+  }
+}

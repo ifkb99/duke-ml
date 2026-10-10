@@ -1,0 +1,15 @@
+{
+ "session": "2026-10-10T20-10-18-neural",
+ "env": {
+  "browser": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Mobile Safari/537.36",
+  "threads": 7,
+  "isolated": true
+ },
+ "results": [],
+ "log": [
+  "5.3s log: [AI] loading the network (webgpu only), 4 threads",
+  "5.7s log: [AI] network q4 fetched and unpacked in 109ms",
+  "5.7s log: [AI] creating a session on webgpu"
+ ],
+ "client": "192.168.40.132"
+}

@@ -1,0 +1,15 @@
+{
+ "session": "2026-10-10T19-56-31-neural",
+ "env": {
+  "browser": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Mobile Safari/537.36",
+  "threads": 7,
+  "isolated": true
+ },
+ "results": [],
+ "log": [
+  "5.5s log: [AI] loading the network (wasm only)",
+  "5.9s log: [AI] network q4 fetched and unpacked in 145ms",
+  "5.9s log: [AI] creating a session on wasm"
+ ],
+ "client": "192.168.40.132"
+}

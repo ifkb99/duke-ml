@@ -5,10 +5,13 @@ description = "Neural network training for The Duke board game"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "flax>=0.12.5",
-    "jax[cuda13]>=0.9.1",
-    "optax>=0.2.6",
+    "flax>=0.12.10",
+    "jax[cuda13]>=0.11.2",
+    "mctx>=0.0.71",
+    "optax>=0.2.8",
     "orbax>=0.1.9",
+    "wandb>=0.30.0",
+    "weave>=0.53.11",
 ]
 
 [build-system]
@@ -17,3 +20,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["training"]
+
+[dependency-groups]
+dev = [
+    "onnx>=1.23.2",
+    "onnxruntime>=1.30.0",
+    "pytest>=9.1.1",
+]

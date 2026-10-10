@@ -1,0 +1,2 @@
+# Exported networks (training/zero/export_onnx.py); not in git, but in the Docker build context
+models/

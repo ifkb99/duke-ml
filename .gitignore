@@ -10,3 +10,11 @@ training/checkpoints/
 **/__pycache__/**
 .pyc
 checkpoints/*
+# JAX engine differential-test fixtures (regenerated on demand)
+training/zero/tests/data/
+
+# Training runs (checkpoints, metrics)
+runs
+
+# Python virtualenv (a symlink to the main checkout in a worktree)
+.venv

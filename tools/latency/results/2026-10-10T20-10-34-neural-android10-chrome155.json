@@ -1,0 +1,65 @@
+{
+ "session": "2026-10-10T20-10-34-neural",
+ "env": {
+  "browser": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Mobile Safari/537.36",
+  "threads": 7,
+  "isolated": true
+ },
+ "results": [
+  {
+   "turn": 2,
+   "budgetMs": 3000,
+   "backend": "webgpu",
+   "loadMs": 1263,
+   "value": -0.11202474740835339,
+   "rootValue": -0.0731201171875,
+   "simulations": 64,
+   "evaluations": 50,
+   "batches": 26,
+   "ms": 1375.125,
+   "move": {
+    "type": "move",
+    "from": {
+     "row": 5,
+     "col": 2
+    },
+    "to": {
+     "row": 4,
+     "col": 2
+    }
+   }
+  },
+  {
+   "turn": 4,
+   "budgetMs": 3000,
+   "backend": "webgpu",
+   "loadMs": 0,
+   "value": -0.1092558053823618,
+   "rootValue": -0.05731201171875,
+   "simulations": 64,
+   "evaluations": 54,
+   "batches": 25,
+   "ms": 667.0250000953674,
+   "move": {
+    "type": "move",
+    "from": {
+     "row": 4,
+     "col": 2
+    },
+    "to": {
+     "row": 2,
+     "col": 2
+    }
+   }
+  }
+ ],
+ "log": [
+  "3.5s log: [AI] loading the network (webgpu only), 1 threads",
+  "3.9s log: [AI] network q4 fetched and unpacked in 137ms",
+  "3.9s log: [AI] creating a session on webgpu",
+  "4.7s log: [AI] network loaded on webgpu in 1023ms",
+  "6.1s log: [AI] neural: 64 sims, 50 evals in 26 batches, 1375ms, value -0.11",
+  "9.6s log: [AI] neural: 64 sims, 54 evals in 25 batches, 667ms, value -0.11"
+ ],
+ "client": "192.168.40.132"
+}
