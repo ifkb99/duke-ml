@@ -267,6 +267,8 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
       depth: mode === 'vs-minimax' ? 6 : undefined,
       budgetMs: mode === 'vs-zero' ? 3000 : undefined,   // thinking time per decision
       report: mode === 'vs-zero' && new URLSearchParams(location.search).has('report'),
+      backend: new URLSearchParams(location.search).get('backend') ?? undefined,
+      threads: Number(new URLSearchParams(location.search).get('threads')) || undefined,
     };
 
     const onMessage = (e: MessageEvent<AIWorkerResponse>) => {

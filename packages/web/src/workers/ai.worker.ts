@@ -11,8 +11,12 @@ export interface AIWorkerRequest {
   simulations?: number;
   /** zeroMove: thinking time per decision in ms, instead of fixed simulations */
   budgetMs?: number;
-  /** zeroMove: post each move's timing to the test server (tools/latency/serve.py) */
+  /** zeroMove: post each move's timing, and the worker's log, to the test server (tools/latency/serve.py) */
   report?: boolean;
+  /** zeroMove: load the network on this backend only ('webgpu' or 'wasm'), e.g. from ?backend=wasm */
+  backend?: string;
+  /** zeroMove: WebAssembly threads, e.g. from ?threads=4 (default 1) */
+  threads?: number;
 }
 
 // The neural network (training/zero, exported with export_onnx.py), loaded on
@@ -43,21 +47,26 @@ async function loadModel(meta: ModelMeta): Promise<{model: Uint8Array; externalD
   return {model, externalData: [{path: v.quant.external, data: dequantize(packed, v.quant)}]};
 }
 
-async function loadZero(): Promise<{evaluate: ZeroEvaluate; search: SearchSettings}> {
+async function loadZero(only?: string, threads?: number): Promise<{evaluate: ZeroEvaluate; search: SearchSettings}> {
   const meta: ModelMeta = await fetch(`${MODELS}duke-zero.json`).then(r => (r.ok ? r.json() : {})).catch(() => ({}));
   const search: SearchSettings = meta.search ?? {};   // missing: spec.json defaults
   const ort = await import('onnxruntime-web/all');
   const wasm = await import('onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url');
   const mjs = await import('onnxruntime-web/ort-wasm-simd-threaded.jsep.mjs?url');
   ort.env.wasm.wasmPaths = {wasm: wasm.default, mjs: mjs.default};
-  // Threads need a cross-origin isolated page (COOP/COEP headers).
-  ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 1, 8) : 1;
+  // One thread unless asked (?threads=N, which needs a cross-origin isolated
+  // page): ORT's threads are workers inside this worker, and on Android Chrome
+  // they never start, so creating the session hangs. The search evaluates a few
+  // positions at a time, too few for threads to pay anyway (~13 ms per
+  // evaluation on a phone with 1 or 7).
+  ort.env.wasm.numThreads = threads && self.crossOriginIsolated ? threads : 1;
   const t0 = performance.now();
   const {model, externalData} = await loadModel(meta);
   console.log(`[AI] network ${meta.web ?? 'fp16'} fetched and unpacked in ${(performance.now() - t0).toFixed(0)}ms`);
   const gpu = 'gpu' in navigator && await (navigator as any).gpu.requestAdapter().catch(() => null);
-  for (const name of gpu ? ['webgpu', 'wasm'] : ['wasm']) {
+  for (const name of only ? [only] : gpu ? ['webgpu', 'wasm'] : ['wasm']) {
     try {
+      console.log(`[AI] creating a session on ${name}`);
       const session = await ort.InferenceSession.create(model, {executionProviders: [name], externalData});
       backend = name;
       console.log(`[AI] network loaded on ${name} in ${(performance.now() - t0).toFixed(0)}ms`
@@ -81,12 +90,36 @@ let backend = '';
 let budget: TimeBudget | null = null;     // kept across moves: it learns this device's speed
 const reportSession = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '-neural';
 const reported: object[] = [];
+const logged: string[] = [];
+let reporting = false;
+
+function sendReport() {
+  if (!reporting) return;
+  fetch(`${import.meta.env.BASE_URL}report`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({session: reportSession, env: {browser: navigator.userAgent,
+      threads: navigator.hardwareConcurrency, isolated: self.crossOriginIsolated}, results: reported, log: logged}),
+  }).catch(() => {});
+}
+
+// With ?report, the worker's console goes to the test server as well: a phone
+// has no console to read, and a load that fails or hangs never reaches a move.
+for (const level of ['log', 'warn', 'error'] as const) {
+  const original = console[level].bind(console);
+  console[level] = (...args: unknown[]) => {
+    original(...args);
+    logged.push(`${(performance.now() / 1000).toFixed(1)}s ${level}: ${args.map(a => a instanceof Error ? `${a.name}: ${a.message}` : String(a)).join(' ')}`);
+    sendReport();
+  };
+}
 
 async function zeroMove(serialized: SerializedGameState, simulations: number | undefined, budgetMs: number,
-                        report: boolean) {
+                        report: boolean, only?: string, threads?: number) {
   const t0 = performance.now();
   const firstMove = zero === null;
-  zero ??= loadZero();
+  reporting = report;
+  if (firstMove) console.log(`[AI] loading the network${only ? ` (${only} only)` : ''}${threads ? `, ${threads} threads` : ''}`);
+  zero ??= loadZero(only, threads);
   zero.catch(() => { zero = null; });   // let a later move retry
   const {evaluate, search} = await zero;
   const loadMs = firstMove ? performance.now() - t0 : 0;
@@ -98,18 +131,14 @@ async function zeroMove(serialized: SerializedGameState, simulations: number | u
   if (report) {
     reported.push({turn: serialized.turnNumber, budgetMs: simulations ? undefined : budgetMs, backend, loadMs,
                    ...info, move});
-    fetch(`${import.meta.env.BASE_URL}report`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({session: reportSession, env: {browser: navigator.userAgent,
-        threads: navigator.hardwareConcurrency, isolated: self.crossOriginIsolated}, results: reported}),
-    }).catch(() => {});
+    sendReport();
   }
   self.postMessage({move, score: info.value, nodesSearched: info.evaluations} satisfies AIWorkerResponse);
 }
 
 self.onmessage = (e: MessageEvent<AIWorkerRequest>) => {
   if (e.data.type === 'zeroMove') {
-    zeroMove(e.data.state, e.data.simulations, e.data.budgetMs ?? 3000, !!e.data.report).catch(err => {
+    zeroMove(e.data.state, e.data.simulations, e.data.budgetMs ?? 3000, !!e.data.report, e.data.backend, e.data.threads).catch(err => {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[AI Worker Error]', err);
       self.postMessage({move: null, score: 0, nodesSearched: 0, error: msg} satisfies AIWorkerResponse);
