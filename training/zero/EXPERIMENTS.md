@@ -771,3 +771,17 @@ matches, az6 = runs/az6/imitation_start.pkl:
 So az6 is about +30–40 Elo over az5, at the same size and speed; 4 bits costs
 it about as little as it cost az5 (top-1 agrees 0.947 vs az5's 0.959, value
 MAE 0.020 vs 0.015). Exported to runs/web-models/az6-0 (q4 1.06 MB).
+
+## az7: more teacher data (from 2026-10-09 21:45)
+
+The az6 students stopped improving on held-out games after ~6 epochs of 4M
+positions, so: 4M more big1:1525 positions at 128 simulations
+(runs/az6-data{2,3}, seeds 12, 13, ~3.7 h), then two students on all 8M, both
+96×10 from az5:1600 at lr 1e-4, one per GPU:
+
+- **az7**: early stopping as az6 (the data effect alone);
+- **az7-drop**: on a plateau, back to the best step with the lr ×0.3, twice,
+  before stopping (`--lr-drops 2`, new; Keras' ReduceLROnPlateau plus the
+  restore).
+
+Each against az6 and az5:1600 over 1024 games.
