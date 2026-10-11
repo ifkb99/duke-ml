@@ -58,11 +58,12 @@ from flax import nnx
 from training.zero import arena as AR
 from training.zero import env as E
 from training.zero import replay as RP
+from training.zero import semantic as M
 from training.zero import rules as R
 from training.zero import search as S
 from training.zero import selfplay as SP
 from training.zero import symmetry as Y
-from training.zero.network import DukeZeroNet, make_forward
+from training.zero.network import DukeZeroNet, make_forward, policy_logp
 
 RUNS = Path(__file__).resolve().parents[2] / 'runs'
 
@@ -129,6 +130,9 @@ class Config:
     imitation_lr_factor: float = 0.3
     imitation_value_weight: float = 0.0  # 0 = warm-start the policy only: a value head
                                    # fit to 3k minimax games just memorizes them (az1/az2)
+    policy_level_weight: float = 0.0  # extra weight on the coarse decision (draw or which piece; level_loss)
+    semantic_inputs: bool = False     # rule features (semantic.py) as extra network inputs
+    semantic_targets: float = 0.0     # > 0: auxiliary heads predict the rule features, this loss weight
     # evaluation / bookkeeping
     iterations: int = 100_000
     eval_every: int = 25
@@ -147,8 +151,31 @@ class Config:
 # Learning
 # ---------------------------------------------------------------------------
 
-def make_loss_fn(forward, value_weight: float = 1.0):
-    """loss_fn(params, batch) -> (policy loss + value_weight * value loss, metrics)."""
+# Action -> its decision at the "which piece" level (draw counts as a piece).
+PIECE_MEMBER = jnp.asarray(R.PIECE_OF[:, None] == np.arange(R.N_PIECES), jnp.float32)   # [A, pieces]
+
+
+def level_loss(target, logp):
+    """Cross-entropy of the coarse decision alone: draw or which piece acts
+    (the policy loss is this plus the cross-entropy of where it goes)."""
+    t = target @ PIECE_MEMBER
+    p = jnp.exp(logp) @ PIECE_MEMBER
+    return -jnp.sum(t * jnp.log(jnp.maximum(p, 1e-30)), -1)
+
+
+def semantic_loss(planes, aux_planes, aux_features):
+    """Binary cross-entropy of the auxiliary heads against the rule features
+    (move counts / 8 clipped to 1), averaged over squares and features."""
+    want_planes, want_features = M.rule_features(planes)
+    bce = lambda logits, y: optax.sigmoid_binary_cross_entropy(logits, jnp.minimum(y, 1.0))
+    return (bce(aux_planes, want_planes).mean(axis=(1, 2, 3)) + bce(aux_features, want_features).mean(-1)) / 2
+
+
+def make_loss_fn(forward, value_weight: float = 1.0, level_weight: float = 0.0, aux_weight: float = 0.0):
+    """loss_fn(params, batch) -> (policy loss + level_weight * level loss
+    + value_weight * value loss + aux_weight * semantic loss, metrics).
+    level_weight > 0 counts the coarse decision (draw or which piece) extra;
+    aux_weight > 0 needs a make_forward_aux forward (semantic targets)."""
     legal_actions = jax.vmap(E.legal_actions)
     observe = jax.vmap(E.observe_arrays)
 
@@ -156,15 +183,18 @@ def make_loss_fn(forward, value_weight: float = 1.0):
         tile, owner, side = (b[k].astype(jnp.int32) for k in ('tile', 'owner', 'side'))
         bags, pending = b['bags'].astype(jnp.int32), b['pending'].astype(jnp.int32)
         legal, _, _ = legal_actions(tile, owner, side, bags, pending)
-        logits, value = forward(params, *observe(tile, owner, side, bags, pending, b['ply']))
+        obs = observe(tile, owner, side, bags, pending, b['ply'])
+        out = forward(params, *obs)
+        logits, value = out[:2]
 
-        logp = jax.nn.log_softmax(jnp.where(legal, logits, -1e9))
+        logp = policy_logp(logits, legal)
         n = tile.shape[0]
         target = jnp.zeros((n, R.N_ACTIONS)).at[jnp.arange(n)[:, None], b['pol_idx'].astype(jnp.int32)] \
             .add(b['pol_p'].astype(jnp.float32))
         has_policy = b['has_policy'].astype(jnp.float32)
         per_sample = -jnp.sum(target * logp, axis=-1)
         policy_loss = jnp.sum(per_sample * has_policy) / jnp.maximum(has_policy.sum(), 1)
+        coarse = jnp.sum(level_loss(target, logp) * has_policy) / jnp.maximum(has_policy.sum(), 1)
         value_loss = jnp.mean((value - b['z']) ** 2)
 
         # Diagnostics: does the network's favourite move match the target's?
@@ -173,8 +203,13 @@ def make_loss_fn(forward, value_weight: float = 1.0):
             'policy_loss': policy_loss,
             'value_loss': value_loss,
             'policy_top1': jnp.sum(top1 * has_policy) / jnp.maximum(has_policy.sum(), 1),
+            'level_loss': coarse,
         }
-        return policy_loss + value_weight * value_loss, metrics
+        total = policy_loss + level_weight * coarse + value_weight * value_loss
+        if aux_weight:
+            metrics['semantic_loss'] = jnp.mean(semantic_loss(obs[0], *out[2:]))
+            total = total + aux_weight * metrics['semantic_loss']
+        return total, metrics
 
     return loss_fn
 
@@ -207,7 +242,7 @@ def make_diagnostics(forward):
         bags, pending = b['bags'].astype(jnp.int32), b['pending'].astype(jnp.int32)
         legal, _, _ = legal_actions(tile, owner, side, bags, pending)
         logits, value = forward(params, *observe(tile, owner, side, bags, pending, b['ply']))
-        logp = jax.nn.log_softmax(jnp.where(legal, logits.astype(jnp.float32), -1e9))
+        logp = policy_logp(logits.astype(jnp.float32), legal)
         n = tile.shape[0]
         target = jnp.zeros((n, R.N_ACTIONS)).at[jnp.arange(n)[:, None], b['pol_idx'].astype(jnp.int32)] \
             .add(b['pol_p'].astype(jnp.float32))
@@ -291,7 +326,8 @@ def build_model(cfg, seed: int):
     if cfg.algo == 'muzero':
         from training.zero.muzero import MuZeroNet
         return MuZeroNet(cfg.channels, cfg.blocks, cfg.policy_head, cfg.dynamics_blocks, rngs=nnx.Rngs(seed))
-    return DukeZeroNet(cfg.channels, cfg.blocks, cfg.policy_head, rngs=nnx.Rngs(seed))
+    return DukeZeroNet(cfg.channels, cfg.blocks, cfg.policy_head, semantic_inputs=cfg.semantic_inputs,
+                       semantic_targets=cfg.semantic_targets > 0, rngs=nnx.Rngs(seed))
 
 
 def make_optimizer(cfg):

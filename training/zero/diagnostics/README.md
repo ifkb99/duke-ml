@@ -15,3 +15,5 @@ They are quick scripts, not polished tools; most read checkpoints from `runs/az1
 | `ztruth.py` | do value targets match the true winner? |
 | `gen_games.py` | generate a fresh self-play dataset from a checkpoint |
 | `learnability.py` | can a fresh net learn the value from a dataset (game-level split)? `ABLATE=features|planes` |
+| `decision_levels.py` | does a search agree with a strong reference on drawing or not, which piece, and the exact move? |
+| `levels_match.py` | grouped ("semantic if") search vs the flat search, one network |

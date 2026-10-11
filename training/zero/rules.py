@@ -229,3 +229,10 @@ N_CMD_ACTIONS = N_SQ * 8 * 8                        # 2304
 DRAW_ACTION = CMD_BASE + N_CMD_ACTIONS              # 3600
 PLACE_BASE = DRAW_ACTION + 1                        # 3601
 N_ACTIONS = PLACE_BASE + 4                          # 3605
+
+# The acting piece of every action: its square for a move/strike, the
+# commander's for a command; 36 = draw, 37 = place. "Which piece moves"
+# (draw counting as one) is one decision level of a move.
+PIECE_OF = np.concatenate([np.arange(N_MOVE_ACTIONS) // N_SQ, np.arange(N_CMD_ACTIONS) // 64,
+                           [N_SQ], [N_SQ + 1] * 4]).astype(np.int32)
+N_PIECES = N_SQ + 2

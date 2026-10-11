@@ -845,6 +845,167 @@ and sends batches of 3+ to WebGPU (padded to a power of two): ~5.4 ms per
 simulation in steady play vs ~6.0 on the CPU alone, at a one-off ~2 s
 calibration on the first move.
 
+## Semantic ifs: deciding in steps (2026-10-10 evening)
+
+The idea (user's): split a decision into meaningful steps the search weighs one
+at a time: is drawing worth it at all, then which piece, then where.
+
+**Where az7-drop's moves go wrong** (training/zero/diagnostics/decision_levels.py):
+2048 fresh decision points from held-out big1 games, each search's move vs
+big1:1525 at 512 simulations. Agreement at three levels: draw or not, the
+acting piece (draw counts as a piece; a command's piece is the commander), the
+exact move.
+
+| search | draw | piece | move | draws | extra draws | missed draws |
+|---|---|---|---|---|---|---|
+| big1 @256 (noise floor) | .956 | .916 | .892 | .277 | .019 | .025 |
+| az7-drop raw policy | .884 | .750 | .670 | .286 | .059 | .057 |
+| az7-drop @32 | .883 | .753 | .673 | .248 | .041 | .076 |
+| az7-drop @128 | .906 | .806 | .744 | .265 | .038 | .056 |
+| az7-drop @400 | .925 | .829 | .770 | .276 | .034 | .041 |
+
+(big1 draws in .283 of these positions.) At 400 simulations the 23% of moves
+that differ split ~7.5 points draw decision, ~10 wrong piece, ~6 wrong square:
+every level matters. Low-simulation search draws less than the raw policy
+(missed draws .076 at 32). But positions are small: median 12 legal moves
+(p10 3, p90 20) from 4 acting pieces, with drawing legal in 78%. Gumbel's root
+already considers up to 16 moves, so it nearly always weighs every one.
+
+**Grouped selection** (search.py, `make_search(..., levels=...)`): each level
+is a table from actions to parts (`draw`: board move / draw / place; `piece`:
+the acting square; `draw-piece`: both). Selection picks a part per level, then
+an action inside it. A part's statistics are its actions' combined (summed
+prior and visits, Q as a real intermediate node would back it up), so it costs
+no extra simulations or network calls. At the root the first level runs the
+Gumbel sequential halving over parts. With no levels the code plays exactly as
+the flat search (tests/test_search_levels.py). On the GPU it first ran 10×
+slower than flat (segment sums are scatters); a matmul against the part
+membership matrix brought that to 2.7× (on the phone the network dominates).
+
+Matches, same network both sides, 1024 games, 128 simulations each (±0.015):
+
+| grouped vs flat | score | W D L |
+|---|---|---|
+| draw-piece | **0.292** | 284 29 711 |
+| piece | **0.400** | 398 24 602 |
+| draw | stopped (the diagnostic already showed it over-drawing) | |
+| piece/best/deep (the best screened variant) | 0.472 | 472 22 530 |
+
+Both lose badly (−154 and −70 Elo). The diagnostic says why: grouped search
+over-draws (draw-piece: .301 draws, extra draws .077 vs flat's .038). A part's
+value is the visit-weighted mean of its moves, but the search plays the best
+one: "move this piece" is diluted by its bad moves, a draw is a single option
+and isn't. Fixes, screened with the diagnostic at 128 simulations (exact-move
+agreement; flat .744):
+
+| variant | move | draws | right square given right piece |
+|---|---|---|---|
+| piece | .720 | .268 | .874 |
+| draw-piece | .674 | .301 | .863 |
+| `best` (a part's Q weighted by the improved policy): piece/best | .717 | .254 | .871 |
+| piece/best/pi (`pi`: inside the part, play the improved policy's argmax) | .719 | .254 | .874 |
+| draw-piece/best/pi | .686 | .284 | .868 |
+| `deep` (root stays flat, groups only below): piece/best/deep | .743 | .263 | .888 |
+| draw-piece/best/deep | .738 | .265 | .884 |
+| piece/best/deep @400 (flat @400: .770) | .760 | .286 | .895 |
+
+`best` fixes the over-drawing (.284 vs big1's .283) but every variant that
+groups at the root still agrees less than flat, and grouping only below the
+root is at best a tie (in play slightly worse, 0.472). Conclusion: **with ~12 moves per position, semantic
+steps don't help this search.** Gumbel's root already gives every move equal
+simulations and then halves the field; a group layer replaces that careful
+comparison of moves with a coarser one of groups, and deeper in the tree the
+branching is as small. Grouping pays when branching is wide (Go-sized), not
+here.
+
+What could still work, not tried:
+- **In the network, not the search**: a factored policy head (P(draw), then
+  P(piece), then P(square | piece)). The raw policy's errors are spread over
+  all three levels too; a head trained per level might generalize better.
+- **Commit early for speed**: decide draw-or-not with a small budget, then
+  search only the chosen branch. Fewer simulations per move by design, but no
+  recovery from a wrong first call; judge at equal phone time.
+- The low-simulation **missed draws** (.076 at 32) are a real, separate effect:
+  sequential halving's first round gives a draw one visit (its unrevealed-tile
+  value) and may cut it.
+
+## Semantic ifs in the network (2026-10-10 night)
+
+The same idea in the network instead of the search. All students: the az7-drop
+recipe (96×10 from az5:1600, the 8M big1 positions, lr 1e-4, two lr drops,
+mirror 0.5), same held-out games.
+
+**Where the policy loss is** (diagnostics/level_losses.py): by the chain rule
+the policy cross-entropy is the coarse decision's (draw, or which piece acts)
+plus where it goes:
+
+| network | policy | = draw/piece | + where | top-1 |
+|---|---|---|---|---|
+| big1:1525 (teacher) | 0.745 | 0.440 | 0.305 | .718 |
+| az7-drop | 0.784 | 0.466 | 0.317 | .705 |
+| az5:1600 | 0.898 | 0.539 | 0.359 | .663 |
+
+Two thirds of az7-drop's gap to the teacher is the coarse decision.
+
+**1. Factored head** (`--policy-head factored`): the network outputs the steps
+separately (a draw-or-not logit, a logit per piece, the spatial move logits
+normalized within each piece) and network.policy_logp multiplies them.
+v1's draw step read the mean-pooled board, v2's an MLP of mean and max pools.
+
+| student | held-out policy | draw/piece | where |
+|---|---|---|---|
+| az8-factored v1 | stopped at 0.875 (step 61k; az7-drop 0.788 there) | | |
+| az8-factored v2 | 0.849 | 0.527 | 0.322 |
+
+Clearly worse, almost all of it in the coarse step, and the draw step's
+richer input barely moved it (v1 vs v2 at 10k steps: 0.958 vs 0.953), so the
+piece step is the problem: it must score a piece before seeing its moves. In
+a flat softmax a piece's probability is the sum over its moves, so one great
+move (a capture, whose logit sees the target square) lifts its piece directly.
+A flat softmax already *is* draw × piece × where (chain rule); separating the
+steps only removes that path. No match run.
+
+**2. Level-weighted loss** (`--level-weight 1`): the flat head with the coarse
+decision's cross-entropy counted twice. Held-out 0.787 (draw/piece 0.465):
+the same as az7-drop. Match vs az7-drop: **0.488** (W473 D53 L498, 32 sims).
+The network already fits the coarse decision as well as this data and size allow.
+
+**3. Semantic features** (training/zero/semantic.py): rule-exact maps computed
+from the input planes with fixed tensor algebra (matmuls with the rule
+tables, comparisons, max): which squares each side could capture on, moves per
+piece of mine, my Duke attacked (check), the opponent's Duke attacked. Tested
+square for square against env.py on 748 positions. Because they're tensor ops
+they can run inside the exported model (no TypeScript port, no parity risk).
+
+- `--semantic-inputs`: the maps are 3 extra input planes and 2 features; the
+  new stem/FiLM weights start at zero, so the student starts as az5.
+- `--semantic-targets 1`: auxiliary heads predict the maps (binary
+  cross-entropy, weight 1), training only; the phone model is unchanged.
+
+| student | policy | draw/piece | value | total | vs az7-drop @32 | @128 |
+|---|---|---|---|---|---|---|
+| az7-drop | 0.784 | 0.466 | 0.108 | 0.892 | | |
+| az8-semin | **0.780** | **0.465** | **0.107** | **0.887** | 0.503 (W489 D53 L482) | 0.519 (W516 D30 L478) |
+| az8-semtgt | 0.782 | 0.466 | 0.107 | 0.890 | 0.509 (W495 D53 L476) | 0.526 (W526 D25 L473) |
+
+Semantic inputs led all the way (0.004–0.006 at matched steps), semantic
+targets started behind (their fresh heads) and caught up; both end slightly
+ahead on held-out loss. At 32 simulations neither is a gain in play; at 128
+both lean ahead (+13 and +18 Elo, 1.2 and 1.7 SE), as better value estimates
+should with deeper search. Another 1024 games each at 128 (seed 22): inputs
+0.525 (W522 D31 L471), targets 0.514 (W514 D25 L485). Over 2048 games:
+**inputs 0.522, targets 0.520 vs az7-drop at 128 simulations (~+15 Elo,
+~2 SE each)**, and a tie at 32. Small but consistent; targets cost nothing on
+the phone (same model), inputs need the rules layer in the ONNX export.
+az8-sem, both at once: held-out 0.782 / 0.107 (total 0.889, no better than
+either alone), vs az7-drop at 128: 0.522 (W520 D29 L475) and 0.526 (W523 D32
+L469), **0.524 over 2048 games (~+17 Elo)**: the two don't stack. Semantic
+targets are the one to ship (no phone change). At 400 simulations, close to
+what the phone runs: semtgt vs az7-drop 0.545 (W275 D8 L229, seed 31) and
+0.514 (W256 D14 L242, seed 32), **0.529 over 1024 games (~+20 Elo, ~1.9 SE)**:
+the gain holds with deeper search. az8-semtgt is the next phone candidate
+(runs/az8-semtgt/imitation.pkl; export, q4, q4 match still to do).
+
 ## Next steps (2026-10-10)
 
 Training:
@@ -861,7 +1022,14 @@ Training:
 
 Web app:
 - **Draw moves take two full budgets** (~6 s on the phone): deciding to draw
-  and placing the tile are separate searches, each with 3 s. Split the budget.
+  and placing the tile are separate searches, each with 3 s, and the second
+  starts from an empty tree although the first already searched the
+  placements under each tile. Reuse that subtree (or split the budget).
+- **Allocate simulations across moves** (the semantic-if goal, after grouping
+  inside the search failed): a small search first, the full budget only when
+  the move isn't clear (sequential halving needs its count up front, so in
+  stages); and reuse the subtree of the opponent's actual reply between turns.
+  Judge each at equal phone time.
 - **TimeBudget undershoots**: steady moves use 2.0–2.9 s of 3 s; the speed
   estimate lags as positions get cheaper.
 - **Cache the calibration** per device (localStorage), skipping the ~2 s on
