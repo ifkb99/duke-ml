@@ -72,14 +72,14 @@ jobs:
     steps:
       - name: Deploy over SSH
         env:
-          SSH_KEY: ${{ secrets.Srv }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           echo "$HOST $HOST_KEY" > ~/.ssh/known_hosts
           if ! ssh-keygen -y -P '' -f ~/.ssh/deploy_key > ~/.ssh/deploy_key.pub 2>/dev/null; then
-            echo "::error::The Srv secret is not a passphrase-free OpenSSH private key"; exit 1
+            echo "::error::The DEPLOY_SSH_KEY secret is missing, or not a passphrase-free OpenSSH private key"; exit 1
           fi
           echo "::notice::Deploy key $(ssh-keygen -lf ~/.ssh/deploy_key.pub)"
           # Errors go to an annotation too: those are readable without the job log

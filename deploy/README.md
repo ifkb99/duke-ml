@@ -6,7 +6,7 @@ Every push to `main` runs `.github/workflows/deploy.yml`:
 2. **image**: builds the Dockerfile and pushes `ghcr.io/ifkb99/duke-ml:<sha>` and `:latest`.
    The network files come from Git LFS (`packages/web/public/models`).
 3. **deploy**: SSHes to the server as `djneko@72.62.114.183` (host key pinned in the
-   workflow) with the `Srv` secret and runs `~/duke-deploy/deploy.sh <sha>`, which pulls that
+   workflow) with the `DEPLOY_SSH_KEY` secret and runs `~/duke-deploy/deploy.sh <sha>`, which pulls that
    image and restarts the container on port 3001. Then it checks
    https://duke.nyaaa.fun/ answers.
 
@@ -31,21 +31,23 @@ curl -fsSLO https://raw.githubusercontent.com/ifkb99/duke-ml/main/deploy/deploy.
 chmod +x deploy.sh
 ```
 
-### 2. The Actions key (`Srv` secret)
+### 2. The Actions key
 
-The `Srv` repository secret holds the private key; its public half must be in
-`~/.ssh/authorized_keys` of `djneko`.
+A key just for deploys, made on the server and locked to `deploy.sh`. Its private
+half becomes the repository secret `DEPLOY_SSH_KEY` (repo → Settings → Secrets and
+variables → Actions → New repository secret). This is not the SSH key in your GitHub
+account settings: that one lets the server reach GitHub; this one lets Actions
+reach the server.
 
-If `Srv` is a key used only for deploys, lock it to the deploy script: prefix its
-line in `authorized_keys` with
-
-```
-command="/home/djneko/duke-deploy/deploy.sh",restrict ssh-ed25519 AAAA... 
+```sh
+ssh-keygen -t ed25519 -N '' -C github-actions-duke -f ~/.ssh/duke_actions
+echo "command=\"$HOME/duke-deploy/deploy.sh\",restrict $(cat ~/.ssh/duke_actions.pub)" >> ~/.ssh/authorized_keys
+cat ~/.ssh/duke_actions        # paste all of it, BEGIN to END, into DEPLOY_SSH_KEY
+rm ~/.ssh/duke_actions         # once the secret is saved
 ```
 
 `restrict` turns off forwarding and terminals; `command=` makes the key run
 `deploy.sh` whatever the client asks, and `deploy.sh` only accepts a commit sha.
-Don't do this to a key you also log in with: it would only ever deploy.
 
 Host key check: the workflow pins `SHA256:gNZUcA/2b/7QOYTs3WECNAMka4kzfKBGM31WgGaeDi4`.
 Compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server.
