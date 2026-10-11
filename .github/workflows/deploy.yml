@@ -1,7 +1,7 @@
 # Every push to main: test, build the Docker image, push it to ghcr.io, then
-# have the server run it. The server is reached over SSH through its
-# Cloudflare Tunnel; deploy/README.md has the one-time setup. Until the
-# DEPLOY_HOST variable is set the deploy job is skipped (the image still builds).
+# SSH to the server and have it run the new image. deploy/README.md has the
+# one-time setup. Until the DEPLOY_USER variable is set the deploy job is
+# skipped (the image still builds).
 name: Deploy
 
 on:
@@ -64,33 +64,24 @@ jobs:
 
   deploy:
     needs: image
-    if: vars.DEPLOY_HOST != ''
+    if: vars.DEPLOY_USER != ''
     runs-on: ubuntu-latest
+    env:
+      HOST: 72.62.114.183
+      # The server's host key (SHA256:gNZUcA/2b/7QOYTs3WECNAMka4kzfKBGM31WgGaeDi4)
+      HOST_KEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK2PUlYDXbW4fq4kvsN7m2Y/B1RoJGeeA6U7XpdrC1FK
     steps:
-      - name: Install cloudflared
-        run: |
-          curl -fsSL -o /tmp/cloudflared.deb \
-            https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-linux-amd64.deb
-          sudo dpkg -i /tmp/cloudflared.deb
-      - name: Deploy over SSH through the tunnel
+      - name: Deploy over SSH
         env:
-          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-          HOST: ${{ vars.DEPLOY_HOST }}
+          SSH_KEY: ${{ secrets.Srv }}
           DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-          # read by `cloudflared access ssh`: the Cloudflare Access service token
-          TUNNEL_SERVICE_TOKEN_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          TUNNEL_SERVICE_TOKEN_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          # The key's forced command on the server runs deploy/deploy.sh; this
-          # tells it which image to run.
+          echo "$HOST $HOST_KEY" > ~/.ssh/known_hosts
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-              -o ProxyCommand='cloudflared access ssh --hostname %h' \
-              "$DEPLOY_USER@$HOST" "deploy ${{ github.sha }}"
+              "$DEPLOY_USER@$HOST" "duke-deploy/deploy.sh ${{ github.sha }}"
       - name: Check the site is up
         run: |
           for i in $(seq 1 12); do
