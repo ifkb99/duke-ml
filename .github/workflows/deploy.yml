@@ -1,7 +1,6 @@
 # Every push to main: test, build the Docker image, push it to ghcr.io, then
 # SSH to the server and have it run the new image. deploy/README.md has the
-# one-time setup. Until the DEPLOY_USER variable is set the deploy job is
-# skipped (the image still builds).
+# one-time server setup.
 name: Deploy
 
 on:
@@ -64,17 +63,16 @@ jobs:
 
   deploy:
     needs: image
-    if: vars.DEPLOY_USER != ''
     runs-on: ubuntu-latest
     env:
       HOST: 72.62.114.183
+      DEPLOY_USER: djneko
       # The server's host key (SHA256:gNZUcA/2b/7QOYTs3WECNAMka4kzfKBGM31WgGaeDi4)
       HOST_KEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK2PUlYDXbW4fq4kvsN7m2Y/B1RoJGeeA6U7XpdrC1FK
     steps:
       - name: Deploy over SSH
         env:
           SSH_KEY: ${{ secrets.Srv }}
-          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key

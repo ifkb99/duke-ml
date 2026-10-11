@@ -5,13 +5,12 @@ Every push to `main` runs `.github/workflows/deploy.yml`:
 1. **test**: `npm ci`, build, `npm test`. A failure stops the deploy.
 2. **image**: builds the Dockerfile and pushes `ghcr.io/ifkb99/duke-ml:<sha>` and `:latest`.
    The network files come from Git LFS (`packages/web/public/models`).
-3. **deploy**: SSHes to the server (72.62.114.183, host key pinned in the workflow)
-   with the `Srv` secret and runs `~/duke-deploy/deploy.sh <sha>`, which pulls that
+3. **deploy**: SSHes to the server as `djneko@72.62.114.183` (host key pinned in the
+   workflow) with the `Srv` secret and runs `~/duke-deploy/deploy.sh <sha>`, which pulls that
    image and restarts the container on port 3001. Then it checks
    https://duke.nyaaa.fun/ answers.
 
-The deploy job is skipped until the `DEPLOY_USER` variable exists, so steps 1–2 run
-on their own until the setup below is done.
+Until the setup below is done, the deploy job fails; the image still builds.
 
 ## One-time setup
 
@@ -35,13 +34,13 @@ chmod +x deploy.sh
 ### 2. The Actions key (`Srv` secret)
 
 The `Srv` repository secret holds the private key; its public half must be in
-`~/.ssh/authorized_keys` of the deploy user.
+`~/.ssh/authorized_keys` of `djneko`.
 
 If `Srv` is a key used only for deploys, lock it to the deploy script: prefix its
 line in `authorized_keys` with
 
 ```
-command="/home/<user>/duke-deploy/deploy.sh",restrict ssh-ed25519 AAAA... 
+command="/home/djneko/duke-deploy/deploy.sh",restrict ssh-ed25519 AAAA... 
 ```
 
 `restrict` turns off forwarding and terminals; `command=` makes the key run
@@ -51,13 +50,7 @@ Don't do this to a key you also log in with: it would only ever deploy.
 Host key check: the workflow pins `SHA256:gNZUcA/2b/7QOYTs3WECNAMka4kzfKBGM31WgGaeDi4`.
 Compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server.
 
-### 3. GitHub (repo → Settings → Secrets and variables → Actions → Variables)
-
-| Variable      | Value                                         |
-|---------------|-----------------------------------------------|
-| `DEPLOY_USER` | the server user that owns `~/duke-deploy`     |
-
-### 4. First deploy
+### 3. First deploy
 
 1. Actions → Deploy → Run workflow (or push to main). Wait for **image** to finish.
 2. Make the image public so the server can pull it without logging in: github.com/ifkb99
