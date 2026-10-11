@@ -47,7 +47,7 @@ from training.zero import replay as RP
 from training.zero import search as S
 from training.zero import selfplay as SP
 from training.zero import train as T
-from training.zero.network import DukeZeroNet, make_forward
+from training.zero.network import DukeZeroNet, make_forward, make_forward_aux
 
 
 def teacher_games(forward, params, cfg, n_samples, games, key, log, chunks=1):
@@ -84,13 +84,27 @@ def copy_from_checkpoint(student, params):
     width (`params`, a checkpoint's). A deeper student keeps its extra residual
     blocks fresh, appended after the trained ones; a fresh block starts as the
     identity (its last conv is zero), so the student plays exactly as the
-    checkpoint does until it learns to use them."""
+    checkpoint does until it learns to use them. Head layers the checkpoint
+    doesn't have (the factored head's draw and piece steps, semantic auxiliary
+    heads) start fresh. Extra inputs (semantic_inputs) get zero weights in the
+    stem and FiLM layers, so they start ignored."""
     s = nnx.to_pure_dict(student)
     assert len(params['blocks']) <= len(s['blocks']), 'the student must be at least as deep'
+
+    def fit(mine, theirs):   # the checkpoint's weights, zero-padded to a larger input
+        theirs = np.asarray(theirs)
+        if theirs.shape == np.shape(mine):
+            return theirs
+        assert theirs.ndim == np.ndim(mine) and all(t <= m for t, m in zip(theirs.shape, np.shape(mine))), \
+            (theirs.shape, np.shape(mine))
+        return np.pad(theirs, [(0, m - t) for t, m in zip(theirs.shape, np.shape(mine))])
+
     for name in s:
+        if name not in params and name.startswith(('policy_', 'aux_')):
+            continue
         if name != 'blocks':
             assert jax.tree.structure(s[name]) == jax.tree.structure(params[name]), name
-            s[name] = params[name]
+            s[name] = jax.tree.map(fit, s[name], params[name])
     for i in s['blocks']:
         if i in params['blocks']:
             s['blocks'][i] = params['blocks'][i]
@@ -122,6 +136,12 @@ def main():
                    help='on a plateau, go back to the best step and cut the lr (x --lr-factor) this many times before stopping')
     p.add_argument('--lr-factor', type=float, default=0.3)
     p.add_argument('--lr', type=float, default=3e-4)
+    p.add_argument('--semantic-inputs', action='store_true',
+                   help='rule features (attack maps, moves per piece, check) as extra inputs (semantic.py)')
+    p.add_argument('--semantic-targets', type=float, default=0.0,
+                   help='> 0: auxiliary heads learn the rule features, at this loss weight')
+    p.add_argument('--level-weight', type=float, default=0.0,
+                   help='extra loss weight on the coarse decision: draw or which piece (train.level_loss)')
     p.add_argument('--seed', type=int, default=0)
     a = p.parse_args()
 
@@ -143,7 +163,8 @@ def main():
                   policy_head=a.policy_head, imitation_steps=a.steps, imitation_value_weight=1.0,
                   imitation_check_every=min(a.check_every, a.steps), imitation_patience=a.patience,
                   imitation_lr_drops=a.lr_drops, imitation_lr_factor=a.lr_factor,
-                  mirror=a.mirror)
+                  mirror=a.mirror, policy_level_weight=a.level_weight,
+                  semantic_inputs=a.semantic_inputs, semantic_targets=a.semantic_targets)
     log(f'start (commit {T.git_commit()})', kind='start', commit=T.git_commit(), distill=True,
         teacher=str(a.teacher), teacher_iteration=t_ckpt['iteration'], init=a.init,
         teacher_simulations=a.simulations or t_cfg.simulations,
@@ -168,7 +189,7 @@ def main():
     if a.samples_only:
         return
 
-    student = DukeZeroNet(cfg.channels, cfg.blocks, cfg.policy_head, rngs=nnx.Rngs(a.seed))
+    student = T.build_model(cfg, a.seed)
     graphdef, params = nnx.split(student)
     if a.init == 'teacher':
         assert (cfg.channels, cfg.blocks) == (t_cfg.channels, t_cfg.blocks), '--init teacher needs the same trunk'
@@ -200,16 +221,19 @@ def main():
         f'value {tm["value_loss"]:.3f}', kind='distill_teacher', **{f'heldout_{k}': v for k, v in tm.items()})
 
     learner = jax.devices()[0]
+    train_forward = make_forward_aux(graphdef) if cfg.semantic_targets else forward
+    train_steps = T.make_train_steps(forward, tx, loss_fn=T.make_loss_fn(
+        train_forward, 1.0, cfg.policy_level_weight, cfg.semantic_targets))
     params, opt_state = T.imitate(cfg, samples, jax.device_put(params, learner), opt_state,
-                                  T.make_train_steps(forward, tx), jax.jit(lambda prm, b: T.make_loss_fn(forward)(prm, b)[1]),
+                                  train_steps, jax.jit(lambda prm, b: T.make_loss_fn(forward)(prm, b)[1]),
                                   learner, np.random.default_rng(a.seed), log)
 
     sm = held_out(jax.jit(lambda prm, b: T.make_loss_fn(forward)(prm, b)[1]), params)
     sd = held_out(T.make_diagnostics(forward), params)
     td = held_out(t_diag, t_params)
-    log(f'student on held-out games: policy {sm["policy_loss"]:.3f} (top-1 {sm["policy_top1"]:.3f}) '
-        f'value {sm["value_loss"]:.3f} | teacher {tm["policy_loss"]:.3f} ({tm["policy_top1"]:.3f}) '
-        f'{tm["value_loss"]:.3f}', kind='distill_result',
+    log(f'student on held-out games: policy {sm["policy_loss"]:.3f} (top-1 {sm["policy_top1"]:.3f}, '
+        f'draw/piece {sm["level_loss"]:.3f}) value {sm["value_loss"]:.3f} | teacher {tm["policy_loss"]:.3f} '
+        f'({tm["policy_top1"]:.3f}, {tm["level_loss"]:.3f}) {tm["value_loss"]:.3f}', kind='distill_result',
         **{f'student_{k}': v for k, v in {**sm, **sd}.items()},
         **{f'teacher_{k}': v for k, v in {**tm, **td}.items()})
     T.save_checkpoint(run_dir / 'imitation.pkl', params, opt_state, 0, cfg)

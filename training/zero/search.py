@@ -35,12 +35,13 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 import mctx
+import numpy as np
 from mctx._src import action_selection, base as mctx_base, qtransforms, search as mctx_search, seq_halving
 from mctx._src.policies import _mask_tree
 
 from training.zero import env as E
 from training.zero import rules as R
-from training.zero.network import observe_batch
+from training.zero.network import observe_batch, policy_logp
 
 A = R.N_ACTIONS     # decision actions
 C = R.N_TYPES       # chance outcomes: which tile type was drawn
@@ -51,6 +52,15 @@ NEG = jnp.finfo(jnp.float32).min
 def _masked(logits, legal):
     logits = logits - jnp.max(logits, axis=-1, keepdims=True)
     return jnp.where(legal, logits, NEG)
+
+
+def _prior(logits, legal):
+    """The network's policy output as masked prior logits. A flat head's
+    logits are used as they are; a factored head (network.py) is normalized
+    one decision step at a time."""
+    if logits.shape[-1] == A:
+        return _masked(logits, legal)
+    return jnp.where(legal, policy_logp(logits, legal), NEG)
 
 
 def _select(cond, a, b):
@@ -99,7 +109,7 @@ def make_recurrent_fn(forward):
         chance_out = mctx.RecurrentFnOutput(
             reward=afterstate.reward,
             discount=jnp.where(nxt.done, 0.0, jnp.where(afterstate.switched, -1.0, 1.0)),
-            prior_logits=jnp.concatenate([_masked(logits, nxt.legal),
+            prior_logits=jnp.concatenate([_prior(logits, nxt.legal),
                                           jnp.full((value.shape[0], C), NEG)], -1),
             value=jnp.where(nxt.done, 0.0, value),
         )
@@ -141,11 +151,12 @@ def _row_view(tree, node_index, lo, hi):
     )
 
 
-def _make_selection(num_simulations, max_considered, qtransform):
+def _make_selection(num_simulations, max_considered, qtransform, grouped=None):
     """Action selection for both node types (unbatched tree, as mctx expects).
 
     Decision nodes: Gumbel MuZero (sequential halving at the root, deterministic
-    "visit what's most under-visited relative to the improved policy" below).
+    "visit what's most under-visited relative to the improved policy" below),
+    or `grouped` (a _make_grouped_choice) for semantic levels.
     Chance nodes: visit the outcome whose visit share lags its probability
     most, so visits track the true draw distribution.
     """
@@ -162,6 +173,10 @@ def _make_selection(num_simulations, max_considered, qtransform):
         view = _row_view(tree, node_index, 0, A)
 
         def decision():
+            if grouped is not None and not grouped.deep:
+                return grouped(view, depth == 0)
+            if grouped is not None:
+                return jax.lax.cond(depth == 0, lambda: root_select(rng, view, 0), lambda: grouped(view, False))
             return jax.lax.cond(depth == 0,
                                 lambda: root_select(rng, view, 0),
                                 lambda: interior_select(rng, view, 0, depth))
@@ -177,6 +192,108 @@ def _make_selection(num_simulations, max_considered, qtransform):
         return jax.lax.cond(is_decision, decision, chance)
 
     return select
+
+
+# "Semantic ifs": grouped selection splits a decision into meaningful steps
+# that the search weighs one at a time, e.g. "draw or play a board move?",
+# then "which piece?", then "where to?". Each level is a table mapping every
+# decision action to a part; a part's statistics are its actions' combined
+# (prior: summed probability; visits: summed; Q: visit-weighted mean, i.e. what
+# a real intermediate tree node would back up), so no extra simulations or
+# network evaluations are needed. The last level is always the action itself.
+KIND = np.concatenate([np.zeros(R.DRAW_ACTION, np.int32), [1], [2] * 4])   # board move / draw / place
+PIECE = R.PIECE_OF                                                         # the acting tile's square
+LEVELS = {'flat': (), 'piece': (PIECE,), 'draw': (KIND,), 'draw-piece': (KIND, PIECE)}
+# Options, appended to a level name with '/', e.g. 'piece/best/pi':
+#   best: a part's Q is its actions' completed Q weighted by the improved
+#         policy (the move it would actually play), not the visit-weighted
+#         mean, which undervalues a part with one good move among bad ones.
+#   pi:   the move played inside the chosen part is the improved policy's
+#         argmax, not the best of the part's most-visited actions.
+#   deep: group only below the root; the root stays the flat Gumbel search.
+
+
+def _parts(table, n_parts, mask, logits, visits, qvalues, weights=None):
+    """Statistics of the parts of `table` among the actions in `mask`, as if each
+    part were a tree node: (valid, logit, visits, Q) per part. With `weights`,
+    a part's Q is the weights-weighted mean of its actions' `qvalues` instead
+    of the visit-weighted one."""
+    logits = jnp.where(mask, logits, NEG)
+    logits = jnp.where(mask, logits - jnp.max(logits), NEG)
+    if table is None:
+        return mask, logits, jnp.where(mask, visits, 0), qvalues
+    # One small matmul against the part membership matrix: segment sums are
+    # scatters, which made the whole search ~10x slower on the GPU.
+    member = (table[:, None] == jnp.arange(n_parts)).astype(jnp.float32)          # [A, parts]
+    n = jnp.where(mask, visits, 0)
+    w = n if weights is None else jnp.where(mask, weights, 0.0)
+    stats = jnp.stack([mask.astype(jnp.float32), jnp.exp(logits), n, w * qvalues, w])   # logits <= 0
+    count, mass, part_n, part_wq, part_w = jnp.matmul(stats, member, precision=jax.lax.Precision.HIGHEST)
+    valid = count > 0
+    part_logits = jnp.where(valid, jnp.log(jnp.maximum(mass, 1e-30)), NEG)
+    part_q = part_wq / jnp.maximum(part_w, 1e-30)
+    part_n = jnp.rint(part_n).astype(visits.dtype)
+    return valid, part_logits, part_n, part_q
+
+
+def _completed_q(raw_value, logits, visits, qvalues, value_scale, maxvisit_init, epsilon, unscaled=False):
+    """qtransforms.qtransform_completed_by_mix_value on explicit arrays
+    (unscaled: also return the completed Q before rescaling)."""
+    value = qtransforms._compute_mixed_value(raw_value, qvalues=qvalues, visit_counts=visits,
+                                             prior_probs=jax.nn.softmax(logits))
+    completed = qtransforms._complete_qvalues(qvalues, visit_counts=visits, value=value)
+    q = qtransforms._rescale_qvalues(completed, epsilon)
+    q = (maxvisit_init + jnp.max(visits)) * value_scale * q
+    return (q, completed) if unscaled else q
+
+
+def _make_grouped_choice(levels, num_simulations, max_considered, value_scale, options=()):
+    """choose(view, root, final) -> action, for a one-node view of a decision node.
+
+    At the root the first level runs Gumbel sequential halving over its parts
+    (exactly as the flat search does over actions); every other step uses the
+    interior rule (visit what lags the improved policy most). final=True picks
+    the move to play: at every level, the best of the most-visited parts.
+    """
+    halving = jnp.array(seq_halving.get_table_of_considered_visits(max_considered, num_simulations))
+    tables = [(jnp.asarray(t), int(t.max()) + 1) for t in levels] + [(None, A)]
+    completed = functools.partial(_completed_q, value_scale=value_scale, maxvisit_init=SEARCH['maxvisitInit'],
+                                  epsilon=SEARCH['rescaleEpsilon'])
+
+    def choose(view, root, final=False):
+        """root: a traced bool (the selection runs under vmap, where a cond
+        would compute both branches, every level twice)."""
+        logits, visits = view.children_prior_logits[0], view.children_visits[0]
+        qvalues, raw = view.qvalues(0), view.raw_values[0]
+        mask = jnp.where(root, ~view.root_invalid_actions, logits > NEG / 2)
+        gumbel = view.extra_data.root_gumbel
+        weights, part_qvalues = None, qvalues
+        if 'best' in options:
+            _, l0, n0, _ = _parts(None, A, mask, logits, visits, qvalues)
+            sigma, part_qvalues = completed(raw, l0, n0, qvalues, unscaled=True)
+            weights = jnp.exp(l0 + sigma - jnp.max(jnp.where(mask, l0 + sigma, NEG)))
+        choice = jnp.int32(0)
+        for level, (table, n_parts) in enumerate(tables):
+            valid, part_logits, part_n, part_q = _parts(table, n_parts, mask, logits, visits,
+                                                        qvalues if table is None else part_qvalues, weights)
+            q = completed(raw, part_logits, part_n, part_q)
+            if final or level == 0:
+                considered = (jnp.max(part_n) if final else
+                              halving[jnp.minimum(max_considered, valid.sum()), part_n.sum()])
+                score = seq_halving.score_considered(considered, gumbel[:n_parts], part_logits, q, part_n)
+                halved = action_selection.masked_argmax(score, ~valid)
+            if not final:
+                score = jax.nn.softmax(part_logits + q) - part_n / (1 + part_n.sum())
+                interior = jnp.argmax(jnp.where(valid, score, -jnp.inf)).astype(jnp.int32)
+            if final and level > 0 and 'pi' in options:
+                halved = jnp.argmax(jnp.where(valid, part_logits + q, -jnp.inf)).astype(jnp.int32)
+            choice = halved if final else jnp.where(root, halved, interior) if level == 0 else interior
+            if table is not None:
+                mask = mask & (table == choice)
+        return choice
+
+    choose.deep = 'deep' in options
+    return choose
 
 
 def _backward(tree, leaf_index, max_len):
@@ -270,7 +387,8 @@ class SearchOutput(NamedTuple):
 
 
 def make_search(forward, num_simulations: int, max_considered: int = SEARCH['maxConsidered'],
-                max_depth: int | None = None, value_scale: float = SEARCH['valueScale']):
+                max_depth: int | None = None, value_scale: float = SEARCH['valueScale'],
+                levels: str = 'flat'):
     """Returns search(params, rng, states, gumbel_scale) -> SearchOutput.
 
     `states` must be decision states (not afterstates). Use gumbel_scale=1.0
@@ -283,6 +401,10 @@ def make_search(forward, num_simulations: int, max_considered: int = SEARCH['max
     
     `value_scale`: how much search values count against the prior (mctx's
     qtransform_completed_by_mix_value). Defaults: packages/ai/src/zero/spec.json.
+
+    `levels`: decide in semantic steps (a key of LEVELS, e.g. 'draw-piece':
+    draw or not, then which piece, then where); 'flat' weighs every action
+    against every other, as Gumbel MuZero does.
     """
     def root_fn(params, states):
         logits, value = forward(params, *observe_batch(states))
@@ -292,12 +414,12 @@ def make_search(forward, num_simulations: int, max_considered: int = SEARCH['max
         return logits, value, embedding
 
     return make_search_from(root_fn, make_recurrent_fn(forward), num_simulations, max_considered,
-                            max_depth, value_scale)
+                            max_depth, value_scale, levels)
 
 
 def make_search_from(root_fn, recurrent_fn, num_simulations: int,
                      max_considered: int = SEARCH['maxConsidered'], max_depth: int | None = None,
-                     value_scale: float = SEARCH['valueScale']):
+                     value_scale: float = SEARCH['valueScale'], levels: str = 'flat'):
     """The Gumbel search for any model of the game (make_search's machinery).
 
     root_fn(params, states) -> (logits [B, A], value [B], root embedding);
@@ -312,13 +434,16 @@ def make_search_from(root_fn, recurrent_fn, num_simulations: int,
     # [0, 1], so at 50 and 0.1 search can shift a move by only ~5 nats early on.
     qtransform = functools.partial(qtransforms.qtransform_completed_by_mix_value, value_scale=value_scale,
                                    maxvisit_init=SEARCH['maxvisitInit'], epsilon=SEARCH['rescaleEpsilon'])
-    selection = _make_selection(num_simulations, max_considered, qtransform)
+    name, *options = levels.split('/')
+    grouped = (None if levels == 'flat' else
+               _make_grouped_choice(LEVELS[name], num_simulations, max_considered, value_scale, options))
+    selection = _make_selection(num_simulations, max_considered, qtransform, grouped)
 
     def search(params, rng, states: E.State, gumbel_scale=1.0) -> SearchOutput:
         batch = states.tile.shape[0]
         logits, value, embedding = root_fn(params, states)
         invalid = ~states.legal
-        prior = _masked(logits, states.legal)
+        prior = _prior(logits, states.legal)
 
         rng, gumbel_rng = jax.random.split(rng)
         gumbel = gumbel_scale * jax.random.gumbel(gumbel_rng, (batch, A))
@@ -340,6 +465,8 @@ def make_search_from(root_fn, recurrent_fn, num_simulations: int,
         score = seq_halving.score_considered(
             considered_visit, gumbel, prior, completed_q, summary.visit_counts)
         action = action_selection.masked_argmax(score, invalid)
+        if grouped is not None and not grouped.deep:
+            action = jax.vmap(lambda t: grouped(_row_view(t, t.ROOT_INDEX, 0, A), True, final=True))(tree)
         weights = jax.nn.softmax(_masked(prior + completed_q, states.legal))
         return SearchOutput(action=action, action_weights=weights,
                             root_value=value, search_value=summary.value)
