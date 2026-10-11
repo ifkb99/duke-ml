@@ -78,8 +78,18 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           echo "$HOST $HOST_KEY" > ~/.ssh/known_hosts
-          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-              "$DEPLOY_USER@$HOST" "duke-deploy/deploy.sh ${{ github.sha }}"
+          if ! ssh-keygen -y -P '' -f ~/.ssh/deploy_key > ~/.ssh/deploy_key.pub 2>/dev/null; then
+            echo "::error::The Srv secret is not a passphrase-free OpenSSH private key"; exit 1
+          fi
+          echo "::notice::Deploy key $(ssh-keygen -lf ~/.ssh/deploy_key.pub)"
+          # Errors go to an annotation too: those are readable without the job log
+          if ! ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+                   "$DEPLOY_USER@$HOST" "duke-deploy/deploy.sh ${{ github.sha }}" 2> ssh.err; then
+            cat ssh.err
+            echo "::error::Deploy failed: $(tail -n 3 ssh.err | tr '\n' ' ')"
+            exit 1
+          fi
+          cat ssh.err
       - name: Check the site is up
         run: |
           for i in $(seq 1 12); do
