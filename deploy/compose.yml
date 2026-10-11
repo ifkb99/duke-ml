@@ -1,0 +1,9 @@
+# Production: runs the image GitHub Actions builds (.github/workflows/deploy.yml).
+# Lives on the server next to deploy.sh; the repo's docker-compose.yml builds
+# locally instead.
+services:
+  duke:
+    image: ghcr.io/ifkb99/duke-ml:${DUKE_TAG:-latest}
+    ports:
+      - "3001:80"
+    restart: unless-stopped

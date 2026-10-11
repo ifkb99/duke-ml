@@ -1,2 +1,7 @@
-# Exported networks (training/zero/export_onnx.py); not in git, but in the Docker build context
-models/
+# Exported networks (training/zero/export_onnx.py) live in models/ through Git
+# LFS (see /.gitattributes). Only the variant the web app loads is kept; the
+# full-precision ones are large and unused by the site.
+models/*.fp32.onnx
+models/*.fp16.onnx
+models/*.int8.onnx
+models/*.q8.*
