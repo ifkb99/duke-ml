@@ -1003,8 +1003,16 @@ L469), **0.524 over 2048 games (~+17 Elo)**: the two don't stack. Semantic
 targets are the one to ship (no phone change). At 400 simulations, close to
 what the phone runs: semtgt vs az7-drop 0.545 (W275 D8 L229, seed 31) and
 0.514 (W256 D14 L242, seed 32), **0.529 over 1024 games (~+20 Elo, ~1.9 SE)**:
-the gain holds with deeper search. az8-semtgt is the next phone candidate
-(runs/az8-semtgt/imitation.pkl; export, q4, q4 match still to do).
+the gain holds with deeper search.
+But not after 4-bit quantization, which is what phones run. Exported from
+runs/az8-semtgt-phone (the checkpoint without the training-only aux heads) to
+runs/web-models/az8-semtgt (q4 1.06 MB; 4-bit top move agrees 0.950 with full
+precision, az7-drop 0.938). az8-semtgt-q4 vs az7-drop-q4 at 400 simulations:
+0.453 (W228 D8 L276, seed 41) and 0.492 (W249 D6 L257, seed 42), **0.473 over
+1024 games (~-19 Elo)**. Against the full-precision 0.529 that is a 0.056 swing
+(~2.5 SE): the semantic student seems to lose more to quantization at deep
+search, or its real edge is ~0 and both results are noise. Either way it is not
+better on the phone: **az7-drop-q4 stays in the web app.**
 
 ## Next steps (2026-10-10)
 
