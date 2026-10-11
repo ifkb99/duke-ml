@@ -5,25 +5,48 @@ import {
   getSetupTargets, applySetupPlacement, isPlayerInCheck, serialize,
 } from '@the-duke/engine';
 import type {AIWorkerRequest, AIWorkerResponse} from '../workers/ai.worker.js';
-import type {GameMode} from '../App.js';
+import {type GameMode, sameCoord} from '../ui.js';
 
-const SETUP_LABELS: Record<SetupPhase, string> = {
-  p1_duke: 'Light: Place your Duke in the center of the back row',
-  p1_footman1: 'Light: Place a Footman next to the Duke',
-  p1_footman2: 'Light: Place a Footman next to the Duke',
-  p2_duke: 'Dark: Place your Duke in the center of the back row',
-  p2_footman1: 'Dark: Place a Footman next to the Duke',
-  p2_footman2: 'Dark: Place a Footman next to the Duke',
+const SETUP_STEP: Record<SetupPhase, string> = {
+  p1_duke: 'Place your Duke on a center square of the back row',
+  p1_footman1: 'Place a Footman next to your Duke',
+  p1_footman2: 'Place a second Footman next to your Duke',
+  p2_duke: 'Place your Duke on a center square of the back row',
+  p2_footman1: 'Place a Footman next to your Duke',
+  p2_footman2: 'Place a second Footman next to your Duke',
+};
+
+/** The move that produced the current position (setup placements included). */
+export type LastMove = GameMove | {type: 'setup'; position: Coord};
+
+/** A friendly tile that the selected tile could command, or that could simply be selected. */
+export interface CommandChoice {coord: Coord; tileName: string}
+
+interface HistoryEntry {state: GameState; lastMove: LastMove | null}
+
+const params = new URLSearchParams(location.search);
+const workerFlags = {
+  report: params.has('report'),
+  backend: params.get('backend') ?? undefined,
+  threads: Number(params.get('threads')) || undefined,
 };
 
 export interface UseGameReturn {
   state: GameState;
+  /** It's a person's turn (always, in hot seat), so the board takes clicks */
+  humanTurn: boolean;
+  thinking: boolean;
+  aiError: string | null;
+  lastMove: LastMove | null;
+  /** The network's estimate for Light, in [-1, 1]; null when unknown */
+  evaluation: number | null;
   selectedTile: Coord | null;
   selectedTileInstance: TileInstance | null;
   viewingBagTile: {name: string; owner: Player} | null;
   legalMoves: GameMove[];
   onCellClick: (coord: Coord) => void;
   onBagTileClick: (name: string, owner: Player) => void;
+  clearSelection: () => void;
   newGame: () => void;
   undo: () => void;
   canUndo: boolean;
@@ -34,39 +57,41 @@ export interface UseGameReturn {
   startDraw: () => void;
   commandTarget: Coord | null;
   commandDestinations: Coord[];
-  /** Setup phase info */
+  commandChoice: CommandChoice | null;
+  resolveCommandChoice: (choice: 'command' | 'select' | null) => void;
   setupTargets: Coord[];
-  setupLabel: string | null;
-  /** Check indicator */
+  setupStep: string | null;
   inCheck: Player | null;
-  /** Pseudo-legal moves for a clicked enemy tile (for viewing only) */
+  /** Pseudo-legal moves of a selected enemy tile (for viewing only) */
   viewingEnemyMoves: GameMove[];
-  /** Show-all-moves toggle */
   showAllMoves: boolean;
   toggleShowAllMoves: () => void;
   allFriendlyTargets: Coord[];
   allEnemyTargets: Coord[];
 }
 
-export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn {
+export function useGame(mode: GameMode, aiPlayer: Player, opts: {evaluate: boolean}): UseGameReturn {
   const [state, setState] = useState<GameState>(() => createInitialState());
-  const [history, setHistory] = useState<GameState[]>([]);
+  const [lastMove, setLastMove] = useState<LastMove | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [selectedTile, setSelectedTile] = useState<Coord | null>(null);
   const [viewingBagTile, setViewingBagTile] = useState<{name: string; owner: Player} | null>(null);
   const [drawMode, setDrawMode] = useState(false);
   const [selectedDrawTile, setSelectedDrawTile] = useState<string | null>(null);
   const [commandTarget, setCommandTarget] = useState<Coord | null>(null);
+  const [commandChoice, setCommandChoice] = useState<CommandChoice | null>(null);
   const [showAllMoves, setShowAllMoves] = useState(false);
-  const aiThinking = useRef(false);
+  const [thinking, setThinking] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [evaluation, setEvaluation] = useState<number | null>(null);
 
   const isSetup = state.status === 'setup';
-  const allMoves = isSetup ? [] : generateAllMoves(state);
+  const isAiTurn = mode !== 'hotseat' && state.currentPlayer === aiPlayer;
+  const humanTurn = !isAiTurn && (isSetup || state.status === 'active');
+  const allMoves = useMemo(() => (isSetup ? [] : generateAllMoves(state)), [state, isSetup]);
 
-  const setupTargets = useMemo(() => {
-    return isSetup ? getSetupTargets(state) : [];
-  }, [state, isSetup]);
-
-  const setupLabel = isSetup && state.setupPhase ? SETUP_LABELS[state.setupPhase] : null;
+  const setupTargets = useMemo(() => (isSetup ? getSetupTargets(state) : []), [state, isSetup]);
+  const setupStep = isSetup && state.setupPhase ? SETUP_STEP[state.setupPhase] : null;
 
   const selectedTileInstance = useMemo<TileInstance | null>(() => {
     if (!selectedTile) return null;
@@ -76,243 +101,245 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
 
   const placementTargets = useMemo<Coord[]>(() => {
     if (!drawMode || !selectedDrawTile) return [];
-    // Draw target squares are tile-independent; the revealed tile is placed on
-    // whichever legal square the player picks.
-    const seen = new Set<string>();
+    // Draw squares don't depend on the tile: the revealed tile goes on whichever one the player picks.
     const targets: Coord[] = [];
     for (const m of allMoves) {
-      if (m.type !== 'draw') continue;
-      const key = `${m.position.row},${m.position.col}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        targets.push(m.position);
-      }
+      if (m.type === 'draw' && !targets.some(t => sameCoord(t, m.position))) targets.push(m.position);
     }
     return targets;
   }, [drawMode, selectedDrawTile, allMoves]);
 
   const commandDestinations = useMemo<Coord[]>(() => {
     if (!selectedTile || !commandTarget) return [];
-    const seen = new Set<string>();
     const dests: Coord[] = [];
     for (const m of allMoves) {
-      if (m.type !== 'command') continue;
-      if (m.commander.row !== selectedTile.row || m.commander.col !== selectedTile.col) continue;
-      if (m.target.row !== commandTarget.row || m.target.col !== commandTarget.col) continue;
-      const key = `${m.targetTo.row},${m.targetTo.col}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        dests.push(m.targetTo);
-      }
+      if (m.type !== 'command' || !sameCoord(m.commander, selectedTile) || !sameCoord(m.target, commandTarget)) continue;
+      if (!dests.some(d => sameCoord(d, m.targetTo))) dests.push(m.targetTo);
     }
     return dests;
   }, [selectedTile, commandTarget, allMoves]);
 
-  // Check detection
   const inCheck = useMemo<Player | null>(() => {
-    if (isSetup || state.status !== 'active') return null;
+    if (state.status !== 'active') return null;
     if (isPlayerInCheck(state, 'P1')) return 'P1';
     if (isPlayerInCheck(state, 'P2')) return 'P2';
     return null;
-  }, [state, isSetup]);
+  }, [state]);
 
-  // Enemy tile move viewing (pseudo-legal moves for display)
   const viewingEnemyMoves = useMemo<GameMove[]>(() => {
     if (!selectedTile || drawMode || isSetup) return [];
     const id = state.board[selectedTile.row][selectedTile.col];
-    if (!id) return [];
-    const tile = state.tiles.get(id);
+    const tile = id ? state.tiles.get(id) : undefined;
     if (!tile || tile.owner === state.currentPlayer) return [];
     return generateTileMoves(state, tile);
   }, [selectedTile, state, drawMode, isSetup]);
 
-  // Show-all-moves: compute all squares targeted by friendly and enemy pieces
+  // Threats overlay: every square each side's tiles could reach
   const {allFriendlyTargets, allEnemyTargets} = useMemo(() => {
-    if (!showAllMoves || isSetup || state.status !== 'active') {
-      return {allFriendlyTargets: [] as Coord[], allEnemyTargets: [] as Coord[]};
-    }
-    const player = state.currentPlayer;
-    const opponent = player === 'P1' ? 'P2' : 'P1';
-    const friendlySet = new Set<string>();
-    const enemySet = new Set<string>();
-    const friendlyCoords: Coord[] = [];
-    const enemyCoords: Coord[] = [];
-
+    const friendly: Coord[] = [];
+    const enemy: Coord[] = [];
+    if (!showAllMoves || state.status !== 'active') return {allFriendlyTargets: friendly, allEnemyTargets: enemy};
     for (const tile of state.tiles.values()) {
-      const moves = generateTileMoves(state, tile);
-      const isOwner = tile.owner === player;
-      const set = isOwner ? friendlySet : enemySet;
-      const coords = isOwner ? friendlyCoords : enemyCoords;
-      for (const m of moves) {
-        let target: Coord | null = null;
-        if (m.type === 'move') target = m.to;
-        else if (m.type === 'strike') target = m.target;
-        else if (m.type === 'command') target = m.targetTo;
-        if (target) {
-          const key = `${target.row},${target.col}`;
-          if (!set.has(key)) {
-            set.add(key);
-            coords.push(target);
-          }
-        }
+      const coords = tile.owner === state.currentPlayer ? friendly : enemy;
+      for (const m of generateTileMoves(state, tile)) {
+        const target = m.type === 'move' ? m.to : m.type === 'strike' ? m.target : m.type === 'command' ? m.targetTo : null;
+        if (target && !coords.some(c => sameCoord(c, target))) coords.push(target);
       }
     }
-    return {allFriendlyTargets: friendlyCoords, allEnemyTargets: enemyCoords};
-  }, [showAllMoves, state, isSetup]);
+    return {allFriendlyTargets: friendly, allEnemyTargets: enemy};
+  }, [showAllMoves, state]);
 
-  const toggleShowAllMoves = useCallback(() => {
-    setShowAllMoves(prev => !prev);
+  const toggleShowAllMoves = useCallback(() => setShowAllMoves(prev => !prev), []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedTile(null);
+    setViewingBagTile(null);
+    setCommandTarget(null);
+    setCommandChoice(null);
   }, []);
 
   const resetSelection = useCallback(() => {
-    setSelectedTile(null);
-    setViewingBagTile(null);
+    clearSelection();
     setDrawMode(false);
     setSelectedDrawTile(null);
-    setCommandTarget(null);
-    setShowAllMoves(false);
-  }, []);
+  }, [clearSelection]);
+
+  const advance = useCallback((from: GameState, next: GameState, move: LastMove) => {
+    setHistory(prev => [...prev, {state: from, lastMove}]);
+    setState(next);
+    setLastMove(move);
+  }, [lastMove]);
 
   const newGame = useCallback(() => {
     setState(createInitialState());
+    setLastMove(null);
     setHistory([]);
+    setEvaluation(null);
+    setAiError(null);
+    setShowAllMoves(false);
     resetSelection();
-    aiThinking.current = false;
   }, [resetSelection]);
 
   const undo = useCallback(() => {
     if (history.length === 0) return;
-    const stepsBack = mode !== 'hotseat' && history.length >= 2 ? 2 : 1;
-    const target = history[history.length - stepsBack];
-    setState(target);
-    setHistory(prev => prev.slice(0, -stepsBack));
+    // Against the AI, undo back to the person's previous turn
+    let steps = 1;
+    if (mode !== 'hotseat') {
+      while (steps < history.length && history[history.length - steps].state.currentPlayer === aiPlayer) steps++;
+    }
+    const target = history[history.length - steps];
+    setState(target.state);
+    setLastMove(target.lastMove);
+    setHistory(prev => prev.slice(0, -steps));
+    setAiError(null);
     resetSelection();
-  }, [history, mode, resetSelection]);
+  }, [history, mode, aiPlayer, resetSelection]);
 
   const executeMove = useCallback((move: GameMove) => {
-    setHistory(prev => [...prev, state]);
-    setState(applyMove(state, move));
+    advance(state, applyMove(state, move), move);
     resetSelection();
-  }, [state, resetSelection]);
+  }, [state, advance, resetSelection]);
 
   const executeSetup = useCallback((coord: Coord) => {
-    setHistory(prev => [...prev, state]);
-    setState(applySetupPlacement(state, coord));
+    advance(state, applySetupPlacement(state, coord), {type: 'setup', position: coord});
     resetSelection();
-  }, [state, resetSelection]);
+  }, [state, advance, resetSelection]);
 
-  const hasPlacementMoves = allMoves.some(m => m.type === 'draw');
-  const canDraw = !isSetup && state.bags[state.currentPlayer].length > 0 && hasPlacementMoves;
+  const canDraw = humanTurn && !isSetup && !drawMode
+    && state.bags[state.currentPlayer].length > 0 && allMoves.some(m => m.type === 'draw');
 
   const startDraw = useCallback(() => {
     if (!canDraw) return;
     const bag = state.bags[state.currentPlayer];
-    const drawn = bag[Math.floor(Math.random() * bag.length)];
+    clearSelection();
     setDrawMode(true);
-    setSelectedDrawTile(drawn);
-    setSelectedTile(null);
-    setViewingBagTile(null);
-    setCommandTarget(null);
-  }, [state, canDraw]);
+    setSelectedDrawTile(bag[Math.floor(Math.random() * bag.length)]);
+  }, [state, canDraw, clearSelection]);
 
   const onBagTileClick = useCallback((name: string, owner: Player) => {
     if (drawMode || isSetup) return;
-    setSelectedTile(null);
-    setCommandTarget(null);
+    clearSelection();
     setViewingBagTile({name, owner});
-  }, [drawMode, isSetup]);
+  }, [drawMode, isSetup, clearSelection]);
 
-  // Web Worker for AI
+  // ── AI worker ──
   const workerRef = useRef<Worker | null>(null);
+  const requestId = useRef(0);
+  const [workerReady, setWorkerReady] = useState(false);
   useEffect(() => {
-    const worker = new Worker(
-      new URL('../workers/ai.worker.ts', import.meta.url),
-      {type: 'module'},
-    );
+    const worker = new Worker(new URL('../workers/ai.worker.ts', import.meta.url), {type: 'module'});
     workerRef.current = worker;
+    setWorkerReady(true);
     return () => {
       worker.terminate();
       workerRef.current = null;
+      setWorkerReady(false);
     };
   }, []);
 
-  // AI turn logic — covers both setup and normal play
-  useEffect(() => {
-    if (mode === 'hotseat') return;
-    if (state.currentPlayer !== aiPlayer) return;
-    if (aiThinking.current) return;
+  /** Posts a request; the reply comes back to onReply only if no newer request was sent since. */
+  const ask = useCallback((req: Omit<AIWorkerRequest, 'id'>, onReply: (r: AIWorkerResponse) => void) => {
+    const worker = workerRef.current;
+    if (!worker) return () => {};
+    const id = ++requestId.current;
+    const onMessage = (e: MessageEvent<AIWorkerResponse>) => {
+      if (e.data.id !== id) return;
+      worker.removeEventListener('message', onMessage);
+      onReply(e.data);
+    };
+    worker.addEventListener('message', onMessage);
+    worker.postMessage({...req, id} satisfies AIWorkerRequest);
+    return () => worker.removeEventListener('message', onMessage);
+  }, []);
 
-    // Setup phase AI — trivial, stays on main thread
-    if (isSetup && setupTargets.length > 0) {
-      aiThinking.current = true;
+  // Evaluation bar: the network's quick value of every new position. Declared
+  // before the AI turn so its request is queued first; the AI's own search value
+  // then replaces it.
+  useEffect(() => {
+    if (!opts.evaluate || !workerReady) return;
+    if (state.status === 'P1_wins' || state.status === 'P2_wins') {
+      setEvaluation(state.status === 'P1_wins' ? 1 : -1);
+      return;
+    }
+    if (state.status !== 'active') {
+      setEvaluation(null);
+      return;
+    }
+    const mover = state.currentPlayer;
+    return ask({type: 'zeroEvaluate', state: serialize(state), backend: workerFlags.backend, threads: workerFlags.threads},
+      r => { if (!r.error) setEvaluation(mover === 'P1' ? r.score : -r.score); });
+  }, [state, opts.evaluate, workerReady, ask]);
+
+  // AI turn, setup included
+  useEffect(() => {
+    if (!isAiTurn || !workerReady) return;
+
+    if (isSetup && setupTargets.length > 0) {   // trivial: random legal square
       const timer = setTimeout(() => {
         const pick = setupTargets[Math.floor(Math.random() * setupTargets.length)];
-        setHistory(prev => [...prev, state]);
-        setState(applySetupPlacement(state, pick));
-        aiThinking.current = false;
-      }, 300);
-      return () => {clearTimeout(timer); aiThinking.current = false;};
+        advance(state, applySetupPlacement(state, pick), {type: 'setup', position: pick});
+      }, 350);
+      return () => clearTimeout(timer);
     }
-
-    // Normal play AI — offload to worker
     if (state.status !== 'active') return;
-    const worker = workerRef.current;
-    if (!worker) return;
 
-    aiThinking.current = true;
-
-    const msg: AIWorkerRequest = {
+    setThinking(true);
+    setAiError(null);
+    const started = performance.now();
+    let delay: ReturnType<typeof setTimeout> | undefined;
+    const cancel = ask({
       type: mode === 'vs-random' ? 'pickRandomMove' : mode === 'vs-zero' ? 'zeroMove' : 'findBestMove',
       state: serialize(state),
       depth: mode === 'vs-minimax' ? 6 : undefined,
       budgetMs: mode === 'vs-zero' ? 3000 : undefined,   // thinking time per decision
-      report: mode === 'vs-zero' && new URLSearchParams(location.search).has('report'),
-      backend: new URLSearchParams(location.search).get('backend') ?? undefined,
-      threads: Number(new URLSearchParams(location.search).get('threads')) || undefined,
-    };
-
-    const onMessage = (e: MessageEvent<AIWorkerResponse>) => {
-      const {move} = e.data;
-      if (move) {
-        setHistory(prev => [...prev, state]);
-        setState(applyMove(state, move));
-      }
-      aiThinking.current = false;
-    };
-
-    worker.addEventListener('message', onMessage);
-    worker.postMessage(msg);
-
+      ...(mode === 'vs-zero' ? workerFlags : {}),
+    }, ({move, score, error}) => {
+      // Instant replies (random) still wait a beat, so the move can be followed
+      delay = setTimeout(() => {
+        setThinking(false);
+        if (error || !move) {
+          setAiError(error ?? 'The AI found no move');
+          return;
+        }
+        if (mode === 'vs-zero' && opts.evaluate) setEvaluation(aiPlayer === 'P1' ? score : -score);
+        advance(state, applyMove(state, move), move);
+      }, Math.max(0, 400 - (performance.now() - started)));
+    });
     return () => {
-      worker.removeEventListener('message', onMessage);
-      aiThinking.current = false;
+      cancel();
+      clearTimeout(delay);
+      setThinking(false);
     };
-  }, [state, mode, aiPlayer, isSetup, setupTargets]);
+    // advance changes with lastMove, which changes only with state
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, mode, aiPlayer, isAiTurn, isSetup, setupTargets, workerReady, ask]);
+
+  const findMove = (from: Coord, to: Coord) => allMoves.find(m =>
+    (m.type === 'move' && sameCoord(m.from, from) && sameCoord(m.to, to))
+    || (m.type === 'strike' && sameCoord(m.from, from) && sameCoord(m.target, to)));
 
   const onCellClick = useCallback((coord: Coord) => {
-    // Setup phase: only accept valid setup placements
-    if (isSetup) {
-      if (mode !== 'hotseat' && state.currentPlayer === aiPlayer) return;
-      if (setupTargets.some(t => t.row === coord.row && t.col === coord.col)) {
-        executeSetup(coord);
+    setCommandChoice(null);
+    if (!humanTurn) {
+      // Still let people look at tiles while the AI thinks
+      if (!isSetup) {
+        setViewingBagTile(null);
+        setSelectedTile(sel => (sameCoord(sel, coord) || !state.board[coord.row][coord.col] ? null : coord));
       }
       return;
     }
 
-    if (state.status !== 'active') return;
-    if (mode !== 'hotseat' && state.currentPlayer === aiPlayer) return;
+    if (isSetup) {
+      if (setupTargets.some(t => sameCoord(t, coord))) executeSetup(coord);
+      return;
+    }
 
     const clickedId = state.board[coord.row][coord.col];
     const clickedTile = clickedId ? state.tiles.get(clickedId) ?? null : null;
 
-    // Draw mode: the tile was already revealed (selectedDrawTile); accept a
-    // click on any legal draw square and place that revealed tile there.
+    // Drawing: the tile is already revealed; place it on any legal draw square.
     if (drawMode && selectedDrawTile) {
-      const isTarget = allMoves.some(
-        m => m.type === 'draw'
-          && m.position.row === coord.row && m.position.col === coord.col,
-      );
-      if (isTarget) {
+      if (placementTargets.some(t => sameCoord(t, coord))) {
         executeMove({type: 'place', tileName: selectedDrawTile, position: coord});
       }
       return;
@@ -320,83 +347,67 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
 
     setViewingBagTile(null);
 
-    // Step 3 of command: pick destination for the commanded tile
+    // Command, step 2: where the commanded tile goes
     if (selectedTile && commandTarget) {
-      const move = allMoves.find(
-        m => m.type === 'command'
-          && m.commander.row === selectedTile.row && m.commander.col === selectedTile.col
-          && m.target.row === commandTarget.row && m.target.col === commandTarget.col
-          && m.targetTo.row === coord.row && m.targetTo.col === coord.col,
-      );
+      const move = allMoves.find(m => m.type === 'command' && sameCoord(m.commander, selectedTile)
+        && sameCoord(m.target, commandTarget) && sameCoord(m.targetTo, coord));
       if (move) {
         executeMove(move);
         return;
       }
       setCommandTarget(null);
-      if (clickedTile && clickedTile.owner === state.currentPlayer) {
-        setSelectedTile(coord);
-        return;
-      }
-      setSelectedTile(null);
+      setSelectedTile(clickedTile && clickedTile.owner === state.currentPlayer ? coord : null);
       return;
     }
 
-    // If a tile is already selected, try to move/strike or start command flow
     if (selectedTile) {
-      const isCommandTarget = allMoves.some(
-        m => m.type === 'command'
-          && m.commander.row === selectedTile.row && m.commander.col === selectedTile.col
-          && m.target.row === coord.row && m.target.col === coord.col,
-      );
-      if (isCommandTarget) {
-        setCommandTarget(coord);
-        return;
-      }
-
-      const move = allMoves.find(m => {
-        if (m.type === 'move') {
-          return m.from.row === selectedTile.row && m.from.col === selectedTile.col
-            && m.to.row === coord.row && m.to.col === coord.col;
-        }
-        if (m.type === 'strike') {
-          return m.from.row === selectedTile.row && m.from.col === selectedTile.col
-            && m.target.row === coord.row && m.target.col === coord.col;
-        }
-        return false;
-      });
-
+      const move = findMove(selectedTile, coord);
       if (move) {
         executeMove(move);
         return;
       }
-
-      if (selectedTile.row === coord.row && selectedTile.col === coord.col) {
+      // A friendly tile in command range: command it, or just select it? Ask.
+      const commandable = allMoves.some(m => m.type === 'command'
+        && sameCoord(m.commander, selectedTile) && sameCoord(m.target, coord));
+      if (commandable && clickedTile) {
+        setCommandChoice({coord, tileName: clickedTile.defName});
+        return;
+      }
+      if (sameCoord(selectedTile, coord)) {
         setSelectedTile(null);
         return;
       }
     }
 
-    if (clickedTile) {
-      setSelectedTile(coord);
-      setCommandTarget(null);
-      return;
-    }
-
-    setSelectedTile(null);
     setCommandTarget(null);
-  }, [state, selectedTile, commandTarget, allMoves, drawMode, selectedDrawTile, executeMove, executeSetup, mode, aiPlayer, isSetup, setupTargets]);
+    setSelectedTile(clickedTile ? coord : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, humanTurn, selectedTile, commandTarget, allMoves, drawMode, selectedDrawTile, placementTargets,
+      executeMove, executeSetup, isSetup, setupTargets]);
+
+  const resolveCommandChoice = useCallback((choice: 'command' | 'select' | null) => {
+    if (commandChoice && choice === 'command') setCommandTarget(commandChoice.coord);
+    if (commandChoice && choice === 'select') setSelectedTile(commandChoice.coord);
+    setCommandChoice(null);
+  }, [commandChoice]);
 
   return {
     state,
+    humanTurn,
+    thinking,
+    aiError,
+    lastMove,
+    evaluation: opts.evaluate ? evaluation : null,
     selectedTile,
     selectedTileInstance,
     viewingBagTile,
     legalMoves: allMoves,
     onCellClick,
     onBagTileClick,
+    clearSelection,
     newGame,
     undo,
-    canUndo: history.length > 0,
+    canUndo: history.length > 0 && !(mode !== 'hotseat' && history.every(h => h.state.currentPlayer === aiPlayer)),
     canDraw,
     drawMode,
     selectedDrawTile,
@@ -404,8 +415,10 @@ export function useGame(mode: GameMode, aiPlayer: Player = 'P2'): UseGameReturn 
     startDraw,
     commandTarget,
     commandDestinations,
+    commandChoice,
+    resolveCommandChoice,
     setupTargets,
-    setupLabel,
+    setupStep,
     inCheck,
     viewingEnemyMoves,
     showAllMoves,

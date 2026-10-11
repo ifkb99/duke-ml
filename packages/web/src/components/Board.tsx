@@ -1,9 +1,15 @@
-import type { Coord, GameMove, GameState } from '@the-duke/engine';
-import { BOARD_SIZE } from '@the-duke/engine';
-import { Tile } from './Tile.js';
+import {useEffect, useMemo, useRef, useState, type CSSProperties} from 'react';
+import type {Coord, GameMove, GameState, Player, TileInstance} from '@the-duke/engine';
+import {BOARD_SIZE} from '@the-duke/engine';
+import type {CommandChoice, LastMove} from '../hooks/useGame.js';
+import {type Orientation, PLAYER_NAME, moveSquares, sameCoord, toScreen} from '../ui.js';
+import {TileFace} from './Tile.js';
+import './board.css';
 
 interface BoardProps {
   state: GameState;
+  bottom: Orientation;
+  humanTurn: boolean;
   selectedTile: Coord | null;
   legalMoves: GameMove[];
   onCellClick: (coord: Coord) => void;
@@ -11,267 +17,201 @@ interface BoardProps {
   placementTargets: Coord[];
   commandTarget: Coord | null;
   commandDestinations: Coord[];
+  commandChoice: CommandChoice | null;
+  onCommandChoice: (choice: 'command' | 'select' | null) => void;
   setupTargets: Coord[];
-  inCheck: string | null;
+  inCheck: Player | null;
   viewingEnemyMoves: GameMove[];
   allFriendlyTargets: Coord[];
   allEnemyTargets: Coord[];
+  lastMove: LastMove | null;
 }
 
-export function Board({
-  state, selectedTile, legalMoves, onCellClick,
-  drawMode, placementTargets, commandTarget, commandDestinations,
-  setupTargets, inCheck, viewingEnemyMoves,
-  allFriendlyTargets, allEnemyTargets,
-}: BoardProps) {
-  const at = (r: number, c: number, coord: Coord | null) =>
-    coord?.row === r && coord?.col === c;
+type Mark = 'dot' | 'capture' | 'strike' | 'command' | 'place' | 'view-dot' | 'view-capture';
 
-  const isCommandDest = (r: number, c: number) =>
-    commandTarget && commandDestinations.some(d => d.row === r && d.col === c);
+interface CellInfo {
+  marks: Set<Mark>;
+  classes: Set<string>;
+  threat?: 'mine' | 'theirs' | 'both';
+}
 
-  const isLegalTarget = (r: number, c: number) => {
-    if (!selectedTile || drawMode || commandTarget) return false;
-    return legalMoves.some(m => {
-      if (m.type === 'move') {
-        return m.from.row === selectedTile.row && m.from.col === selectedTile.col
-          && m.to.row === r && m.to.col === c;
+const key = (c: Coord) => c.row * BOARD_SIZE + c.col;
+const FILES = 'abcdef';
+
+export function Board(props: BoardProps) {
+  const {state, bottom, selectedTile, legalMoves, drawMode, commandTarget, lastMove, humanTurn} = props;
+
+  const tileAt = (c: Coord): TileInstance | null => {
+    const id = state.board[c.row][c.col];
+    return id ? state.tiles.get(id) ?? null : null;
+  };
+
+  const cells = useMemo(() => {
+    const info: CellInfo[] = Array.from({length: BOARD_SIZE * BOARD_SIZE}, () => ({marks: new Set(), classes: new Set()}));
+    const at = (c: Coord) => info[key(c)];
+    const occupied = (c: Coord) => state.board[c.row][c.col] !== null;
+
+    if (lastMove) {
+      if (lastMove.type === 'setup') at(lastMove.position).classes.add('last-to');
+      else {
+        const sq = moveSquares(lastMove);
+        if (sq.from) at(sq.from).classes.add('last-from');
+        if (sq.to) at(sq.to).classes.add('last-to');
+        if (sq.struck) at(sq.struck).classes.add('last-struck');
+        if (sq.commander) at(sq.commander).classes.add('last-commander');
       }
-      if (m.type === 'strike') {
-        return m.from.row === selectedTile.row && m.from.col === selectedTile.col
-          && m.target.row === r && m.target.col === c;
+    }
+
+    if (selectedTile) at(selectedTile).classes.add('selected');
+    if (commandTarget) at(commandTarget).classes.add('command-target');
+
+    // The selected tile's options
+    if (selectedTile && humanTurn && !drawMode && !commandTarget) {
+      for (const m of legalMoves) {
+        if (m.type === 'move' && sameCoord(m.from, selectedTile)) at(m.to).marks.add(occupied(m.to) ? 'capture' : 'dot');
+        else if (m.type === 'strike' && sameCoord(m.from, selectedTile)) at(m.target).marks.add('strike');
+        else if (m.type === 'command' && sameCoord(m.commander, selectedTile)) at(m.target).marks.add('command');
       }
-      if (m.type === 'command') {
-        return m.commander.row === selectedTile.row && m.commander.col === selectedTile.col
-          && m.target.row === r && m.target.col === c;
+    }
+    for (const d of props.commandDestinations) at(d).marks.add(occupied(d) ? 'capture' : 'dot');
+    for (const p of props.placementTargets) at(p).marks.add('place');
+    for (const p of props.setupTargets) if (humanTurn) at(p).marks.add('place');
+
+    for (const m of props.viewingEnemyMoves) {
+      const t = m.type === 'move' ? m.to : m.type === 'strike' ? m.target : m.type === 'command' ? m.targetTo : null;
+      if (t) at(t).marks.add(occupied(t) ? 'view-capture' : 'view-dot');
+    }
+
+    for (const t of props.allFriendlyTargets) at(t).threat = 'mine';
+    for (const t of props.allEnemyTargets) at(t).threat = at(t).threat ? 'both' : 'theirs';
+
+    if (props.inCheck) {
+      for (const tile of state.tiles.values()) {
+        if (tile.defName === 'Duke' && tile.owner === props.inCheck) at(tile.position).classes.add('in-check');
       }
-      return false;
-    });
-  };
+    }
+    return info;
+  }, [state, selectedTile, legalMoves, drawMode, commandTarget, lastMove, humanTurn, props.commandDestinations,
+      props.placementTargets, props.setupTargets, props.viewingEnemyMoves, props.allFriendlyTargets,
+      props.allEnemyTargets, props.inCheck]);
 
-  const isCommandableTarget = (r: number, c: number) => {
-    if (!selectedTile || drawMode || commandTarget) return false;
-    return legalMoves.some(
-      m => m.type === 'command'
-        && m.commander.row === selectedTile.row && m.commander.col === selectedTile.col
-        && m.target.row === r && m.target.col === c,
-    );
-  };
+  // Screen order: row by row from the top of the screen
+  const squares: Coord[] = [];
+  for (let sr = 0; sr < BOARD_SIZE; sr++) {
+    for (let c = 0; c < BOARD_SIZE; c++) squares.push(toScreen({row: sr, col: c}, bottom));
+  }
 
-  const isEnemyMoveTarget = (r: number, c: number) => {
-    if (viewingEnemyMoves.length === 0) return false;
-    return viewingEnemyMoves.some(m => {
-      if (m.type === 'move') return m.to.row === r && m.to.col === c;
-      if (m.type === 'strike') return m.target.row === r && m.target.col === c;
-      if (m.type === 'command') return m.targetTo.row === r && m.targetTo.col === c;
-      return false;
-    });
-  };
-
-  const isPlacementTarget = (r: number, c: number) =>
-    drawMode && placementTargets.some(p => p.row === r && p.col === c);
-
-  const isSetupTarget = (r: number, c: number) =>
-    setupTargets.some(t => t.row === r && t.col === c);
-
-  const isDukeInCheck = (r: number, c: number) => {
-    if (!inCheck) return false;
-    const tileId = state.board[r][c];
-    if (!tileId) return false;
-    const tile = state.tiles.get(tileId);
-    return tile?.defName === 'Duke' && tile.owner === inCheck;
-  };
-
-  const isFriendlyAll = (r: number, c: number) =>
-    allFriendlyTargets.some(t => t.row === r && t.col === c);
-
-  const isEnemyAll = (r: number, c: number) =>
-    allEnemyTargets.some(t => t.row === r && t.col === c);
-
-  const rows = Array.from({ length: BOARD_SIZE }, (_, i) => i);
-  const cols = Array.from({ length: BOARD_SIZE }, (_, i) => i);
-
-  const showAll = allFriendlyTargets.length > 0 || allEnemyTargets.length > 0;
+  const viewedTile = selectedTile ? tileAt(selectedTile) : null;
+  const viewClass = viewedTile && viewedTile.owner === bottom ? 'view-own' : 'view-theirs';
 
   return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: `repeat(${BOARD_SIZE}, 1fr)`,
-      gap: '1.5px',
-      background: 'rgba(196,162,74,0.1)',
-      padding: '3px',
-      borderRadius: 'var(--radius-lg)',
-      width: '100%',
-      maxWidth: '460px',
-      aspectRatio: '1',
-      boxShadow: '0 2px 20px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(196,162,74,0.08)',
-    }}>
-      {rows.map(r =>
-        cols.map(c => {
-          const tileId = state.board[r][c];
-          const tile = tileId ? state.tiles.get(tileId) ?? null : null;
-          const dark = (r + c) % 2 === 1;
-          const selected = at(r, c, selectedTile);
-          const cmdTarget = at(r, c, commandTarget);
-          const cmdDest = isCommandDest(r, c);
-          const legalTarget = isLegalTarget(r, c);
-          const commandable = isCommandableTarget(r, c);
-          const enemyTarget = isEnemyMoveTarget(r, c);
-          const placeable = isPlacementTarget(r, c);
-          const setupCell = isSetupTarget(r, c);
-          const dukeCheck = isDukeInCheck(r, c);
-          const friendlyAll = showAll && isFriendlyAll(r, c);
-          const enemyAll = showAll && isEnemyAll(r, c);
+    <div className={`board ${viewClass}`}>
+      <div className="board-inner">
+        <div className="board-cells" role="grid" aria-label="Board">
+          {squares.map(c => {
+            const s = toScreen(c, bottom);
+            const cell = cells[key(c)];
+            const tile = tileAt(c);
+            const name = `${FILES[c.col]}${c.row + 1}`;
+            const classes = ['cell', (c.row + c.col) % 2 ? 'cell-dark' : 'cell-light', ...cell.classes];
+            if (cell.marks.size) classes.push('cell-target');
+            return (
+              <button
+                key={key(c)}
+                type="button"
+                className={classes.join(' ')}
+                onClick={() => props.onCellClick(c)}
+                aria-label={`${name}${tile ? `, ${PLAYER_NAME[tile.owner]} ${tile.defName}` : ''}`}
+              >
+                {s.col === 0 && <span className="coord coord-rank">{c.row + 1}</span>}
+                {s.row === BOARD_SIZE - 1 && <span className="coord coord-file">{FILES[c.col]}</span>}
+              </button>
+            );
+          })}
+        </div>
 
-          let bg: string;
-          if (dukeCheck) bg = 'rgba(220, 60, 60, 0.4)';
-          else if (setupCell) bg = 'var(--highlight)';
-          else if (selected) bg = 'var(--selected)';
-          else if (cmdTarget) bg = 'rgba(196,162,74,0.3)';
-          else if (cmdDest) bg = 'rgba(196,162,74,0.2)';
-          else if (commandable) bg = 'rgba(196,162,74,0.15)';
-          else if (legalTarget) bg = 'var(--highlight)';
-          else if (enemyTarget) bg = 'rgba(220, 60, 60, 0.22)';
-          else if (placeable) bg = 'var(--accent-dim)';
-          else if (friendlyAll && enemyAll) bg = 'rgba(180, 130, 50, 0.25)';
-          else if (friendlyAll) bg = 'rgba(60, 180, 80, 0.2)';
-          else if (enemyAll) bg = 'rgba(220, 60, 60, 0.18)';
-          else bg = dark ? 'var(--board-dark)' : 'var(--board-light)';
+        <Pieces state={state} bottom={bottom} />
 
-          const isCorner = (r === 0 || r === BOARD_SIZE - 1) && (c === 0 || c === BOARD_SIZE - 1);
-          let radius = '0';
-          if (isCorner) {
-            if (r === 0 && c === 0) radius = '7px 0 0 0';
-            else if (r === 0 && c === BOARD_SIZE - 1) radius = '0 7px 0 0';
-            else if (r === BOARD_SIZE - 1 && c === 0) radius = '0 0 0 7px';
-            else radius = '0 0 7px 0';
-          }
+        <div className="board-marks" aria-hidden>
+          {squares.map(c => {
+            const cell = cells[key(c)];
+            const s = toScreen(c, bottom);
+            if (!cell.marks.size && !cell.threat && !cell.classes.has('last-struck')) return null;
+            return (
+              <div key={key(c)} className="mark-cell" style={{'--x': s.col, '--y': s.row} as CSSProperties}>
+                {[...cell.marks].map(m => <span key={m} className={`mark mark-${m}`} />)}
+                {cell.classes.has('last-struck') && <span className="mark mark-struck" />}
+                {cell.threat && <span className={`threat threat-${cell.threat}`} />}
+              </div>
+            );
+          })}
+        </div>
 
-          return (
-            <div
-              key={`${r}-${c}`}
-              onClick={() => onCellClick({ row: r, col: c })}
-              style={{
-                background: bg,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                position: 'relative',
-                aspectRatio: '1',
-                borderRadius: radius,
-                transition: 'background 0.15s',
-              }}
-            >
-              {tile && <Tile tile={tile} />}
+        {props.commandChoice && (
+          <ChoicePopover choice={props.commandChoice} bottom={bottom} commander={viewedTile?.defName ?? ''}
+                         onChoose={props.onCommandChoice} />
+        )}
+      </div>
+    </div>
+  );
+}
 
-              {dukeCheck && tile && (
-                <div style={{
-                  position: 'absolute', inset: '2px', borderRadius: '5px',
-                  border: '2px solid rgba(220, 60, 60, 0.7)',
-                  boxShadow: '0 0 10px rgba(220, 60, 60, 0.4)',
-                  pointerEvents: 'none',
-                }} />
-              )}
+function ChoicePopover({choice, bottom, commander, onChoose}: {
+  choice: CommandChoice; bottom: Orientation; commander: string; onChoose: (c: 'command' | 'select' | null) => void;
+}) {
+  const s = toScreen(choice.coord, bottom);
+  const below = s.row < 2;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onChoose(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onChoose]);
+  return (
+    <div className={`choice ${below ? 'choice-below' : ''}`}
+         style={{'--x': s.col, '--y': s.row} as CSSProperties} role="dialog" aria-label="Choose an action">
+      <button type="button" className="btn btn-gold" onClick={() => onChoose('command')} autoFocus>
+        <span className="choice-icon" aria-hidden>◆</span> {commander} commands {choice.tileName}
+      </button>
+      <button type="button" className="btn" onClick={() => onChoose('select')}>
+        Select {choice.tileName}
+      </button>
+    </div>
+  );
+}
 
-              {!tile && cmdDest && (
-                <div style={{
-                  width: '34%', height: '34%', borderRadius: '50%',
-                  background: 'var(--accent)', opacity: 0.5,
-                }} />
-              )}
+/** The tiles, absolutely placed so moves slide; captured tiles fade out where they stood. */
+function Pieces({state, bottom}: {state: GameState; bottom: Orientation}) {
+  const prev = useRef(state.tiles);
+  const [ghosts, setGhosts] = useState<TileInstance[]>([]);
+  useEffect(() => {
+    const gone = [...prev.current.values()].filter(t => !state.tiles.has(t.id));
+    prev.current = state.tiles;
+    if (gone.length === 0 || gone.length > 2) return;   // more: a new game or a long undo
+    setGhosts(gone);
+    const timer = setTimeout(() => setGhosts([]), 600);
+    return () => clearTimeout(timer);
+  }, [state.tiles]);
 
-              {tile && commandable && (
-                <div style={{
-                  position: 'absolute', inset: '2px', borderRadius: '5px',
-                  border: '2px solid var(--accent)', pointerEvents: 'none',
-                }} />
-              )}
+  const tiles = [...state.tiles.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
+  return (
+    <div className="board-pieces" aria-hidden>
+      {ghosts.map(t => <Piece key={`ghost-${t.id}`} tile={t} bottom={bottom} ghost />)}
+      {tiles.map(t => <Piece key={t.id} tile={t} bottom={bottom} />)}
+    </div>
+  );
+}
 
-              {tile && cmdTarget && (
-                <div style={{
-                  position: 'absolute', inset: '2px', borderRadius: '5px',
-                  border: '2px solid var(--accent)',
-                  boxShadow: '0 0 8px rgba(196,162,74,0.4)',
-                  pointerEvents: 'none',
-                }} />
-              )}
-
-              {tile && cmdDest && (
-                <div style={{
-                  position: 'absolute', inset: '2px', borderRadius: '5px',
-                  border: '2px dashed var(--accent)', pointerEvents: 'none',
-                }} />
-              )}
-
-              {!tile && placeable && (
-                <div style={{
-                  width: '36%', height: '36%', borderRadius: '50%',
-                  background: 'var(--accent)', opacity: 0.35,
-                  border: '2px solid var(--accent)',
-                }} />
-              )}
-
-              {!tile && setupCell && (
-                <div style={{
-                  width: '36%', height: '36%', borderRadius: '50%',
-                  background: 'var(--accent)', opacity: 0.4,
-                  border: '2px solid var(--accent)',
-                }} />
-              )}
-
-              {legalTarget && !tile && !commandable && (
-                <div style={{
-                  width: '28%', height: '28%', borderRadius: '50%',
-                  background: 'var(--accent)', opacity: 0.45,
-                }} />
-              )}
-
-              {legalTarget && tile && !commandable && (
-                <div style={{
-                  position: 'absolute', inset: '2px', borderRadius: '5px',
-                  border: '2px solid var(--accent)', pointerEvents: 'none',
-                }} />
-              )}
-
-              {enemyTarget && !tile && (
-                <div style={{
-                  width: '28%', height: '28%', borderRadius: '50%',
-                  background: 'rgba(220, 60, 60, 0.6)', opacity: 0.6,
-                }} />
-              )}
-
-              {enemyTarget && tile && (
-                <div style={{
-                  position: 'absolute', inset: '2px', borderRadius: '5px',
-                  border: '2px solid rgba(220, 60, 60, 0.6)', pointerEvents: 'none',
-                }} />
-              )}
-
-              {showAll && !tile && friendlyAll && !enemyAll && (
-                <div style={{
-                  width: '22%', height: '22%', borderRadius: '50%',
-                  background: 'rgba(60, 180, 80, 0.6)',
-                }} />
-              )}
-
-              {showAll && !tile && enemyAll && !friendlyAll && (
-                <div style={{
-                  width: '22%', height: '22%', borderRadius: '50%',
-                  background: 'rgba(220, 60, 60, 0.5)',
-                }} />
-              )}
-
-              {showAll && !tile && friendlyAll && enemyAll && (
-                <div style={{
-                  width: '22%', height: '22%', borderRadius: '50%',
-                  background: 'rgba(180, 130, 50, 0.6)',
-                }} />
-              )}
-            </div>
-          );
-        }),
-      )}
+function Piece({tile, bottom, ghost}: {tile: TileInstance; bottom: Orientation; ghost?: boolean}) {
+  // The face remounts when the tile flips; after the first mount that plays the flip animation
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; }, []);
+  const s = toScreen(tile.position, bottom);
+  return (
+    <div className={`piece ${ghost ? 'piece-ghost' : ''}`} style={{'--x': s.col, '--y': s.row} as CSSProperties}>
+      <div className={`piece-body ${ghost ? '' : 'piece-enter'}`}>
+        <TileFace key={tile.side} name={tile.defName} owner={tile.owner} side={tile.side} bottom={bottom}
+                  flipped={mounted.current && !ghost} />
+      </div>
     </div>
   );
 }

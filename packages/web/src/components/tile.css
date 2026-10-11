@@ -1,0 +1,143 @@
+/* ── Tiles: the pieces on the board, and the flat chips in bags and headers ── */
+
+.tile {
+  --tile-ink: #0a0912;
+  position: relative;
+  width: 88%;
+  height: 88%;
+  border-radius: 9%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4%;
+  padding: 7% 0 5%;
+  color: var(--tile-text);
+  user-select: none;
+  overflow: hidden;
+  background: var(--tile-bg);
+  border: 1px solid var(--tile-rim);
+  box-shadow:
+    0 0.15em 0.4em rgba(0, 0, 0, 0.55),
+    0 0.05em 0 rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -0.25em 0.5em rgba(0, 0, 0, 0.3);
+}
+
+/* engraved inner frame */
+.tile::after {
+  content: '';
+  position: absolute;
+  inset: 5%;
+  border-radius: 6%;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  pointer-events: none;
+}
+
+.tile-light {
+  --tile-bg: linear-gradient(160deg, var(--light-hi) 0%, var(--light-mid) 48%, var(--light-lo) 100%);
+  --tile-rim: var(--light-rim);
+}
+
+.tile-dark {
+  --tile-bg: linear-gradient(160deg, var(--dark-hi) 0%, var(--dark-mid) 48%, var(--dark-lo) 100%);
+  --tile-rim: var(--dark-rim);
+}
+
+.tile-duke {
+  border: 1.5px solid var(--gold);
+  box-shadow:
+    0 0 0.7em rgba(212, 178, 92, 0.35),
+    0 0.15em 0.4em rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -0.25em 0.5em rgba(0, 0, 0, 0.3);
+}
+
+/* Side B: gold corner triangles, as on the physical tiles */
+.tile-corners {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  --c: clamp(5px, 12%, 12px);
+  background:
+    linear-gradient(135deg, var(--gold) var(--c), transparent 0) top left,
+    linear-gradient(225deg, var(--gold) var(--c), transparent 0) top right,
+    linear-gradient(45deg, var(--gold) var(--c), transparent 0) bottom left,
+    linear-gradient(315deg, var(--gold) var(--c), transparent 0) bottom right;
+  background-size: 50% 50%;
+  background-repeat: no-repeat;
+  opacity: 0.9;
+}
+
+.tile-diagram {
+  width: 72%;
+  flex: none;
+  aspect-ratio: 1;
+  border-radius: 6%;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.06));
+}
+
+.tile-diagram .diagram-bg { fill: rgba(5, 4, 12, 0.38); }
+.tile-diagram .diagram-line line { stroke: rgba(255, 255, 255, 0.12); stroke-width: 0.04; }
+.tile-diagram .diagram-self { fill: rgba(255, 255, 255, 0.22); stroke: rgba(255, 255, 255, 0.6); stroke-width: 0.06; }
+
+.tile-name {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.25em;
+  font-weight: 700;
+  font-size: max(8px, 11cqi);
+  line-height: 1;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
+}
+
+.tile-name .crown {
+  width: 1.15em;
+  color: var(--gold);
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.5));
+}
+
+.tile-name-full { display: none; }
+
+@container piece (min-width: 92px) {
+  .tile-name { font-size: 10.5cqi; }
+  .tile-name-full { display: inline; }
+  .tile-name-short { display: none; }
+}
+
+/* ── Animations ── */
+
+.tile-flip { animation: tile-flip 0.42s cubic-bezier(.3, .7, .3, 1); }
+
+@keyframes tile-flip {
+  0% { transform: perspective(400px) rotateY(-90deg) scale(1.08); filter: brightness(1.6); }
+  100% { transform: none; filter: none; }
+}
+
+/* ── Chips ── */
+
+.tile-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.9em;
+  height: 1.9em;
+  border-radius: 0.35em;
+  background: var(--tile-bg);
+  border: 1px solid var(--tile-rim);
+  color: var(--tile-text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 0 -2px 3px rgba(0, 0, 0, 0.3);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.tile-chip .tile-corners { --c: 4px; }

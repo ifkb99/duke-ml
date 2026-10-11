@@ -1,206 +1,142 @@
-import { useState, useMemo } from 'react';
-import type { Player } from '@the-duke/engine';
-import { Board } from './components/Board.js';
-import { GameControls } from './components/GameControls.js';
-import { BagPanel } from './components/BagPanel.js';
-import { TileDetail } from './components/TileDetail.js';
-import { useGame } from './hooks/useGame.js';
-import { useIsMobile } from './hooks/useIsMobile.js';
+import {useEffect, useState} from 'react';
+import type {Player} from '@the-duke/engine';
+import {ActionBar} from './components/ActionBar.js';
+import {Bags} from './components/Bags.js';
+import {Board} from './components/Board.js';
+import {GameOver, NewGameDialog} from './components/Dialogs.js';
+import {EvalBar} from './components/EvalBar.js';
+import {PlusIcon} from './components/Icons.js';
+import {Inspector, Legend, inspectorSubject} from './components/Inspector.js';
+import {StatusLine} from './components/StatusLine.js';
+import {Crown} from './components/Tile.js';
+import {useGame} from './hooks/useGame.js';
+import {type GameMode, MODE_NAME, PLAYER_NAME, endReason, other} from './ui.js';
+import './components/controls.css';
 
-export type GameMode = 'hotseat' | 'vs-random' | 'vs-minimax' | 'vs-zero';
+interface Settings {
+  mode: GameMode;
+  /** The person's side against an AI */
+  human: Player;
+  showEval: boolean;
+}
+
+const DEFAULTS: Settings = {mode: 'vs-zero', human: 'P1', showEval: true};
+const STORAGE_KEY = 'duke-settings';
+
+function loadSettings(): Settings {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+    return {...DEFAULTS, ...saved};
+  } catch {
+    return DEFAULTS;
+  }
+}
 
 export function App() {
-  const [mode, setMode] = useState<GameMode>('vs-zero');
-  const [aiPlayer, setAiPlayer] = useState<Player>('P2');
-  const game = useGame(mode, aiPlayer);
-  const isMobile = useIsMobile(660);
+  const [settings, setSettings] = useState<Settings>(loadSettings);
+  const [newGameOpen, setNewGameOpen] = useState(false);
+  const [resultDismissed, setResultDismissed] = useState(false);
+  const {mode, human, showEval} = settings;
+  const game = useGame(mode, other(human), {evaluate: showEval});
+  const {state} = game;
 
-  const { state } = game;
-  const isSetup = state.status === 'setup';
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch { /* private mode */ }
+  }, [settings]);
 
-  const commandTargetTile = useMemo(() => {
-    if (!game.commandTarget) return null;
-    const id = state.board[game.commandTarget.row][game.commandTarget.col];
-    return id ? state.tiles.get(id) ?? null : null;
-  }, [game.commandTarget, state]);
+  useEffect(() => setResultDismissed(false), [state]);
 
-  const boardEl = (
-    <Board
-      state={state}
-      selectedTile={game.selectedTile}
-      legalMoves={game.legalMoves}
-      onCellClick={game.onCellClick}
-      drawMode={game.drawMode}
-      placementTargets={game.placementTargets}
-      commandTarget={game.commandTarget}
-      commandDestinations={game.commandDestinations}
-      setupTargets={game.setupTargets}
-      inCheck={game.inCheck}
-      viewingEnemyMoves={game.viewingEnemyMoves}
-      allFriendlyTargets={game.allFriendlyTargets}
-      allEnemyTargets={game.allEnemyTargets}
-    />
-  );
+  // Esc closes the inspector; Ctrl/Cmd+Z undoes
+  const {clearSelection, undo, canUndo} = game;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (newGameOpen) return;
+      if (e.key === 'Escape') clearSelection();
+      if (e.key === 'z' && (e.ctrlKey || e.metaKey) && canUndo) { e.preventDefault(); undo(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [newGameOpen, clearSelection, undo, canUndo]);
 
-  const p1Bag = (
-    <BagPanel
-      player="P1"
-      bag={state.bags.P1}
-      isActive={state.currentPlayer === 'P1'}
-      viewingTile={game.viewingBagTile?.owner === 'P1' ? game.viewingBagTile.name : null}
-      onTileClick={game.onBagTileClick}
-      compact={isMobile}
-    />
-  );
+  const humanSide = mode === 'hotseat' ? null : human;
+  const bottom: Player = humanSide ?? 'P1';
+  const over = state.status === 'P1_wins' || state.status === 'P2_wins';
+  const inspecting = inspectorSubject(game) !== null;
 
-  const p2Bag = (
-    <BagPanel
-      player="P2"
-      bag={state.bags.P2}
-      isActive={state.currentPlayer === 'P2'}
-      viewingTile={game.viewingBagTile?.owner === 'P2' ? game.viewingBagTile.name : null}
-      onTileClick={game.onBagTileClick}
-      compact={isMobile}
-    />
-  );
+  const start = (m: GameMode, h: Player) => {
+    setSettings(s => ({...s, mode: m, human: h}));
+    setNewGameOpen(false);
+    game.newGame();
+  };
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: isMobile ? '0.4rem' : '0.6rem',
-      width: '100%',
-      maxWidth: '820px',
-      height: '100%',
-      overflow: 'hidden',
-    }}>
-      {/* Title */}
-      <h1 style={{
-        fontFamily: 'var(--font-display)',
-        fontSize: isMobile ? '1.3rem' : '1.7rem',
-        fontWeight: 700,
-        letterSpacing: '0.12em',
-        color: 'var(--accent)',
-        textAlign: 'center',
-      }}>
-        THE DUKE
-      </h1>
-
-      <GameControls
-        mode={mode}
-        onModeChange={setMode}
-        aiPlayer={aiPlayer}
-        onAiPlayerChange={setAiPlayer}
-        state={state}
-        onNewGame={game.newGame}
-        onUndo={game.undo}
-        canUndo={game.canUndo}
-        compact={isMobile}
-        showAllMoves={game.showAllMoves}
-        onToggleShowAllMoves={game.toggleShowAllMoves}
-      />
-
-      {/* Setup instruction banner */}
-      {game.setupLabel && (
-        <div style={{
-          padding: '0.5rem 1.2rem',
-          background: 'var(--surface)',
-          border: '1.5px solid var(--accent)',
-          borderRadius: 'var(--radius)',
-          fontSize: isMobile ? '0.75rem' : '0.85rem',
-          fontWeight: 600,
-          color: 'var(--accent)',
-          textAlign: 'center',
-          letterSpacing: '0.02em',
-          fontFamily: 'var(--font-body)',
-        }}>
-          {game.setupLabel}
+    <div className="app">
+      <header className="topbar">
+        <div className="brand">
+          <Crown className="crown brand-crown" />
+          <h1>The Duke</h1>
         </div>
-      )}
+        <span className="matchup">
+          {mode === 'hotseat' ? 'Hot seat' : <>You play <b className={human === 'P1' ? 'text-light' : 'text-dark'}>{PLAYER_NAME[human]}</b> vs {MODE_NAME[mode]}</>}
+        </span>
+        <button type="button" className="btn" onClick={() => setNewGameOpen(true)}>
+          <PlusIcon /> <span className="btn-label">New game</span>
+        </button>
+      </header>
 
-      {/* Desktop: bags flanking board */}
-      {!isMobile && (
-        <div style={{
-          display: 'flex',
-          gap: '10px',
-          width: '100%',
-          alignItems: 'flex-start',
-          justifyContent: 'center',
-          flex: '1 1 0',
-          minHeight: 0,
-        }}>
-          {!isSetup && p1Bag}
-          {boardEl}
-          {!isSetup && p2Bag}
+      <main className={`layout ${inspecting ? 'inspecting' : ''}`}>
+        <div className="area-status">
+          <StatusLine game={game} mode={mode} human={humanSide} />
         </div>
-      )}
 
-      {/* Mobile: board then bags below */}
-      {isMobile && (
-        <>
-          <div style={{
-            flex: '1 1 0',
-            minHeight: 0,
-            width: '100%',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'flex-start',
-            overflow: 'hidden',
-          }}>
-            <div style={{
-              width: '100%',
-              maxWidth: '460px',
-              maxHeight: '100%',
-              aspectRatio: '1',
-            }}>
-              {boardEl}
-            </div>
+        <div className="area-board">
+          {showEval && <EvalBar value={game.evaluation} bottom={bottom} />}
+          <div className="board-wrap">
+            <Board
+              state={state}
+              bottom={bottom}
+              humanTurn={game.humanTurn}
+              selectedTile={game.selectedTile}
+              legalMoves={game.legalMoves}
+              onCellClick={game.onCellClick}
+              drawMode={game.drawMode}
+              placementTargets={game.placementTargets}
+              commandTarget={game.commandTarget}
+              commandDestinations={game.commandDestinations}
+              commandChoice={game.commandChoice}
+              onCommandChoice={game.resolveCommandChoice}
+              setupTargets={game.setupTargets}
+              inCheck={game.inCheck}
+              viewingEnemyMoves={game.viewingEnemyMoves}
+              allFriendlyTargets={game.allFriendlyTargets}
+              allEnemyTargets={game.allEnemyTargets}
+              lastMove={game.lastMove}
+            />
+            {over && !resultDismissed && (
+              <GameOver winner={state.status === 'P1_wins' ? 'P1' : 'P2'} reason={endReason(state)} human={humanSide}
+                        mode={mode} onRematch={game.newGame} onNewGame={() => setNewGameOpen(true)}
+                        onDismiss={() => setResultDismissed(true)} />
+            )}
           </div>
-          {!isSetup && (
-            <div style={{
-              display: 'flex',
-              gap: '6px',
-              width: '100%',
-              flexShrink: 0,
-            }}>
-              {p1Bag}
-              {p2Bag}
-            </div>
-          )}
-        </>
-      )}
-
-      {!isSetup && (
-        <TileDetail
-          tile={game.selectedTileInstance}
-          viewingBagTile={game.viewingBagTile}
-          currentPlayer={state.currentPlayer}
-          bagSize={state.bags[state.currentPlayer].length}
-          canDraw={game.canDraw}
-          drawMode={game.drawMode}
-          selectedDrawTile={game.selectedDrawTile}
-          onStartDraw={game.startDraw}
-          commandTarget={game.commandTarget}
-          commandTargetTile={commandTargetTile}
-          compact={isMobile}
-        />
-      )}
-
-      {state.status !== 'active' && state.status !== 'setup' && (
-        <div style={{
-          padding: '0.75rem 2rem',
-          background: 'var(--accent)',
-          borderRadius: 'var(--radius-lg)',
-          fontWeight: 700,
-          fontSize: '1.1rem',
-          color: '#0d0b14',
-          letterSpacing: '0.04em',
-          fontFamily: 'var(--font-display)',
-        }}>
-          {state.status === 'P1_wins' ? 'Light Wins!' : 'Dark Wins!'}
         </div>
-      )}
+
+        <div className="area-actions">
+          <ActionBar game={game} showEval={showEval}
+                     onToggleEval={() => setSettings(s => ({...s, showEval: !s.showEval}))} />
+        </div>
+
+        <aside className="area-panel">
+          {inspecting ? <Inspector game={game} bottom={bottom} /> : (
+            <section className="card hint-card">
+              <p>Tap a tile to see how it moves. Tiles flip after every action, so each has two sides.</p>
+              <Legend />
+            </section>
+          )}
+          <Bags game={game} bottom={bottom} />
+        </aside>
+      </main>
+
+      <NewGameDialog open={newGameOpen} mode={mode} human={human} onClose={() => setNewGameOpen(false)} onStart={start} />
     </div>
   );
 }

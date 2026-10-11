@@ -4,7 +4,10 @@ import {findBestMove, pickRandomMove, onnxEvaluate, zeroChooseMove, TimeBudget, 
         type ZeroEvaluate, routeByBatchSize, findCrossover, toZeroState} from '@the-duke/ai';
 
 export interface AIWorkerRequest {
-  type: 'findBestMove' | 'pickRandomMove' | 'zeroMove';
+  /** zeroEvaluate: the network's value of `state`, no search (for the evaluation bar) */
+  type: 'findBestMove' | 'pickRandomMove' | 'zeroMove' | 'zeroEvaluate';
+  /** echoed in the response, so the page can drop answers to requests it no longer wants */
+  id: number;
   state: SerializedGameState;
   depth?: number;
   /** zeroMove: search simulations per decision (fixed) */
@@ -101,7 +104,9 @@ async function loadZero(first: SerializedGameState, only?: string, threads?: num
 }
 
 export interface AIWorkerResponse {
+  id: number;
   move: GameMove | null;
+  /** zeroMove / zeroEvaluate: value for the player to move in the request's state, in [-1, 1] */
   score: number;
   nodesSearched: number;
   error?: string;
@@ -134,7 +139,23 @@ for (const level of ['log', 'warn', 'error'] as const) {
   };
 }
 
-async function zeroMove(serialized: SerializedGameState, simulations: number | undefined, budgetMs: number,
+// The network session runs one call at a time: queue zeroMove and zeroEvaluate.
+let zeroQueue: Promise<unknown> = Promise.resolve();
+function queued<T>(job: () => Promise<T>): Promise<T> {
+  const run = zeroQueue.then(job, job);
+  zeroQueue = run.catch(() => {});
+  return run;
+}
+
+async function zeroEvaluate(id: number, serialized: SerializedGameState, only?: string, threads?: number) {
+  zero ??= loadZero(serialized, only, threads);
+  zero.catch(() => { zero = null; });
+  const {evaluate} = await zero;
+  const [out] = await evaluate([toZeroState(serialized)]);
+  self.postMessage({id, move: null, score: out.value, nodesSearched: 1} satisfies AIWorkerResponse);
+}
+
+async function zeroMove(id: number, serialized: SerializedGameState, simulations: number | undefined, budgetMs: number,
                         report: boolean, only?: string, threads?: number) {
   const t0 = performance.now();
   const firstMove = zero === null;
@@ -154,16 +175,25 @@ async function zeroMove(serialized: SerializedGameState, simulations: number | u
                    ...info, move});
     sendReport();
   }
-  self.postMessage({move, score: info.value, nodesSearched: info.evaluations} satisfies AIWorkerResponse);
+  self.postMessage({id, move, score: info.value, nodesSearched: info.evaluations} satisfies AIWorkerResponse);
+}
+
+function fail(id: number, err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error('[AI Worker Error]', err);
+  self.postMessage({id, move: null, score: 0, nodesSearched: 0, error: msg} satisfies AIWorkerResponse);
 }
 
 self.onmessage = (e: MessageEvent<AIWorkerRequest>) => {
+  const {id} = e.data;
   if (e.data.type === 'zeroMove') {
-    zeroMove(e.data.state, e.data.simulations, e.data.budgetMs ?? 3000, !!e.data.report, e.data.backend, e.data.threads).catch(err => {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('[AI Worker Error]', err);
-      self.postMessage({move: null, score: 0, nodesSearched: 0, error: msg} satisfies AIWorkerResponse);
-    });
+    const {state, simulations, budgetMs, report, backend, threads} = e.data;
+    queued(() => zeroMove(id, state, simulations, budgetMs ?? 3000, !!report, backend, threads)).catch(err => fail(id, err));
+    return;
+  }
+  if (e.data.type === 'zeroEvaluate') {
+    const {state, backend, threads} = e.data;
+    queued(() => zeroEvaluate(id, state, backend, threads)).catch(err => fail(id, err));
     return;
   }
   try {
@@ -172,7 +202,7 @@ self.onmessage = (e: MessageEvent<AIWorkerRequest>) => {
 
     if (type === 'pickRandomMove') {
       const move = pickRandomMove(state);
-      self.postMessage({move, score: 0, nodesSearched: 0} satisfies AIWorkerResponse);
+      self.postMessage({id, move, score: 0, nodesSearched: 0} satisfies AIWorkerResponse);
       return;
     }
 
@@ -182,13 +212,12 @@ self.onmessage = (e: MessageEvent<AIWorkerRequest>) => {
     const elapsed = performance.now() - t0;
     console.log(`[AI] depth=${d} nodes=${result.nodesSearched} time=${elapsed.toFixed(0)}ms score=${result.score}`);
     self.postMessage({
+      id,
       move: result.move,
       score: result.score,
       nodesSearched: result.nodesSearched,
     } satisfies AIWorkerResponse);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[AI Worker Error]', err);
-    self.postMessage({move: null, score: 0, nodesSearched: 0, error: msg} satisfies AIWorkerResponse);
+    fail(id, err);
   }
 };

@@ -1,0 +1,283 @@
+/* ── Board: frame, squares, tiles, marks ── */
+
+.board {
+  position: relative;
+  width: var(--board);
+  height: var(--board);
+  flex: none;
+  padding: max(5px, calc(var(--board) * 0.018));
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, rgba(212, 178, 92, 0.22), rgba(212, 178, 92, 0.04) 40%, rgba(212, 178, 92, 0.16)),
+    var(--surface);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.55),
+    0 2px 0 rgba(255, 255, 255, 0.04) inset,
+    0 0 0 1px rgba(212, 178, 92, 0.28);
+}
+
+.board-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.board-cells {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template: repeat(6, 1fr) / repeat(6, 1fr);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), inset 0 0 30px rgba(0, 0, 0, 0.5);
+}
+
+.cell {
+  position: relative;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: var(--sq-light);
+  cursor: pointer;
+  box-shadow: inset 0 0 0 0.5px rgba(212, 178, 92, 0.09);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cell-dark { background: var(--sq-dark); }
+
+.cell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+@media (hover: hover) {
+  .cell:hover::before { background: rgba(255, 255, 255, 0.045); }
+  .cell-target:hover::before { background: rgba(212, 178, 92, 0.16); }
+}
+
+.cell:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; z-index: 1; }
+
+.cell.last-from::before {
+  background: rgba(212, 178, 92, 0.08);
+  box-shadow: inset 0 0 0 2px rgba(212, 178, 92, 0.22);
+}
+.cell.last-to::before,
+.cell.last-commander::before {
+  background: rgba(212, 178, 92, 0.2);
+  box-shadow: inset 0 0 0 2px rgba(212, 178, 92, 0.45);
+}
+.cell.last-struck::before { background: rgba(224, 86, 107, 0.2); }
+
+.cell.selected::before,
+.cell.command-target::before {
+  background: radial-gradient(circle, rgba(212, 178, 92, 0.42), rgba(212, 178, 92, 0.16) 70%);
+  box-shadow: inset 0 0 0 2px var(--gold);
+}
+
+.cell.in-check::before {
+  background: radial-gradient(circle, rgba(224, 70, 90, 0.6), rgba(224, 70, 90, 0.15) 75%);
+  box-shadow: inset 0 0 0 2px rgba(240, 90, 110, 0.85);
+  animation: check-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes check-pulse { 50% { opacity: 0.55; } }
+
+.coord {
+  position: absolute;
+  font-size: clamp(8px, calc(var(--board) * 0.017), 11px);
+  font-weight: 600;
+  color: rgba(232, 226, 210, 0.28);
+  line-height: 1;
+  pointer-events: none;
+}
+.coord-rank { top: 4%; left: 5%; }
+.coord-file { bottom: 4%; right: 6%; }
+
+/* ── Pieces ── */
+
+.board-pieces,
+.board-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.piece,
+.mark-cell {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: calc(100% / 6);
+  height: calc(100% / 6);
+  transform: translate(calc(var(--x) * 100%), calc(var(--y) * 100%));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.piece {
+  container: piece / inline-size;
+  transition: transform 0.36s cubic-bezier(0.25, 0.85, 0.3, 1);
+  z-index: 1;
+}
+
+.piece-body {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.piece-enter { animation: piece-drop 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.15); }
+
+@keyframes piece-drop {
+  from { transform: scale(1.3) translateY(-10%); opacity: 0; }
+}
+
+.piece-ghost { z-index: 0; }
+.piece-ghost .piece-body { animation: piece-captured 0.6s ease-in forwards; }
+
+@keyframes piece-captured {
+  0% { opacity: 1; }
+  25% { opacity: 1; filter: brightness(1.7) saturate(0.3); }
+  100% { opacity: 0; transform: scale(0.55) rotate(-10deg); filter: brightness(0.6); }
+}
+
+/* ── Marks: what the selected tile can do ── */
+
+.board-marks { z-index: 2; }
+
+.mark { position: absolute; }
+
+.mark-dot,
+.mark-view-dot {
+  width: 24%;
+  height: 24%;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 12px rgba(212, 178, 92, 0.65);
+  animation: mark-in 0.18s ease-out;
+}
+
+.mark-capture,
+.mark-view-capture {
+  inset: 4%;
+  border-radius: 12%;
+  border: max(2px, calc(var(--board) * 0.005)) solid var(--gold);
+  box-shadow: 0 0 14px rgba(212, 178, 92, 0.55), inset 0 0 14px rgba(212, 178, 92, 0.35);
+  animation: mark-in 0.18s ease-out;
+}
+
+.board.view-own { --view: var(--view-own); }
+.board.view-theirs { --view: var(--view-theirs); }
+.mark-view-dot { background: var(--view); box-shadow: 0 0 10px var(--view); opacity: 0.8; width: 20%; height: 20%; }
+.mark-view-capture { border-color: var(--view); box-shadow: 0 0 12px var(--view); opacity: 0.85; }
+
+.mark-strike {
+  inset: 12%;
+  border-radius: 50%;
+  border: max(2px, calc(var(--board) * 0.005)) solid var(--strike);
+  box-shadow: 0 0 14px rgba(224, 86, 107, 0.6), inset 0 0 10px rgba(224, 86, 107, 0.4);
+  background:
+    linear-gradient(var(--strike), var(--strike)) center / 2px 120% no-repeat,
+    linear-gradient(var(--strike), var(--strike)) center / 120% 2px no-repeat;
+  animation: mark-in 0.18s ease-out;
+}
+
+.mark-command {
+  top: 4%;
+  right: 4%;
+  width: 24%;
+  height: 24%;
+  background: var(--gold);
+  border: 2px solid var(--bg);
+  transform: rotate(45deg) scale(0.8);
+  box-shadow: 0 0 10px rgba(212, 178, 92, 0.8);
+  animation: mark-in 0.18s ease-out;
+}
+
+.mark-place {
+  inset: 14%;
+  border-radius: 12%;
+  border: 2px dashed rgba(212, 178, 92, 0.75);
+  background:
+    linear-gradient(var(--gold), var(--gold)) center / 2px 32% no-repeat,
+    linear-gradient(var(--gold), var(--gold)) center / 32% 2px no-repeat,
+    rgba(212, 178, 92, 0.1);
+  animation: place-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes place-breathe { 50% { opacity: 0.55; } }
+
+.mark-struck {
+  inset: 20%;
+  background:
+    linear-gradient(45deg, transparent 45%, var(--strike) 45% 55%, transparent 55%),
+    linear-gradient(-45deg, transparent 45%, var(--strike) 45% 55%, transparent 55%);
+  filter: drop-shadow(0 0 6px rgba(224, 86, 107, 0.8));
+  animation: struck 1.2s ease-out forwards;
+}
+
+@keyframes struck {
+  0% { opacity: 0; transform: scale(1.5); }
+  20% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0.55; }
+}
+
+@keyframes mark-in { from { opacity: 0; transform: scale(0.5); } }
+.mark-command { animation-name: none; }
+
+/* Threats overlay: a pip per side in opposite corners */
+.threat::before,
+.threat::after {
+  content: '';
+  position: absolute;
+  width: 11%;
+  height: 11%;
+  border-radius: 50%;
+  display: none;
+}
+.threat::before { left: 9%; bottom: 9%; background: var(--threat-mine); box-shadow: 0 0 6px var(--threat-mine); }
+.threat::after { right: 9%; top: 9%; background: var(--threat-theirs); box-shadow: 0 0 6px var(--threat-theirs); }
+.threat-mine::before,
+.threat-both::before,
+.threat-theirs::after,
+.threat-both::after { display: block; }
+.threat {
+  position: absolute;
+  inset: 0;
+}
+
+/* ── Command or select? ── */
+
+.choice {
+  position: absolute;
+  z-index: 10;
+  left: clamp(95px, calc((var(--x) + 0.5) * 100% / 6), calc(100% - 95px));
+  top: calc(var(--y) * 100% / 6);
+  transform: translate(-50%, calc(-100% - 6px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  min-width: 180px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
+  animation: pop-in 0.16s ease-out;
+}
+
+.choice-below {
+  top: calc((var(--y) + 1) * 100% / 6);
+  transform: translate(-50%, 6px);
+}
+
+.choice .btn { justify-content: flex-start; width: 100%; }
+.choice-icon { font-size: 0.75em; }
+
+@keyframes pop-in { from { opacity: 0; scale: 0.92; } }
