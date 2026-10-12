@@ -46,18 +46,34 @@ function adjacentEmpty(state: GameState, origin: Coord): Coord[] {
   return targets;
 }
 
-const DUKE_START_COLS: readonly number[] = [BOARD_SIZE / 2 - 1, BOARD_SIZE / 2];
+const BACK_ROW_COLS: readonly number[] = Array.from({length: BOARD_SIZE}, (_, c) => c);
+const CENTER_COLS: readonly number[] = [BOARD_SIZE / 2 - 1, BOARD_SIZE / 2];
 
-/** Return valid placement squares for the current setup sub-phase. */
+/**
+ * Return valid placement squares for the current setup sub-phase. A Duke may
+ * start anywhere on its home row (a house rule: see getStandardSetupTargets).
+ */
 export function getSetupTargets(state: GameState): Coord[] {
+  return setupTargets(state, BACK_ROW_COLS);
+}
+
+/**
+ * The same under the official rule: the Duke starts on one of the two center
+ * squares of its home row. The AIs set up this way, and the neural network
+ * trained on these starts only (training/zero/rules.py).
+ */
+export function getStandardSetupTargets(state: GameState): Coord[] {
+  return setupTargets(state, CENTER_COLS);
+}
+
+function setupTargets(state: GameState, dukeCols: readonly number[]): Coord[] {
   if (state.status !== 'setup' || !state.setupPhase) return [];
 
   switch (state.setupPhase) {
-    // Official rule: the Duke starts on one of the two center squares of its home row.
     case 'p1_duke':
-      return DUKE_START_COLS.filter(c => !state.board[0][c]).map(c => ({row: 0, col: c}));
+      return dukeCols.filter(c => !state.board[0][c]).map(c => ({row: 0, col: c}));
     case 'p2_duke':
-      return DUKE_START_COLS
+      return dukeCols
         .filter(c => !state.board[BOARD_SIZE - 1][c])
         .map(c => ({row: BOARD_SIZE - 1, col: c}));
     case 'p1_footman1':

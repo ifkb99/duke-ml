@@ -21,7 +21,7 @@ import {parseArgs} from 'node:util';
 
 import {
   createInitialState, applySetupPlacement, applyMove,
-  generateAllMoves, getSetupTargets, enumerateDrawOutcomes,
+  generateAllMoves, getStandardSetupTargets, enumerateDrawOutcomes,
   type GameState, type GameMove,
 } from '@the-duke/engine';
 
@@ -275,7 +275,7 @@ const SETUP_MAXIMIZING: Record<string, boolean> = {
 
 function setupMinimax(state: GameState): {score: number; coord: {row: number; col: number} | null} {
   if (state.status === 'active') return {score: evaluate(state), coord: null};
-  const targets = getSetupTargets(state);
+  const targets = getStandardSetupTargets(state);
   if (targets.length === 0) return {score: evaluate(state), coord: null};
 
   const maximizing = SETUP_MAXIMIZING[state.setupPhase!] ?? true;

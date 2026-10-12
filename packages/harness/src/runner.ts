@@ -6,7 +6,7 @@
  * the engine), per-move metrics, and JSONL game logs for replay.
  */
 import type { GameMove, GameState, Player } from '@the-duke/engine';
-import { createInitialState, applyMove, applySetupPlacement, getSetupTargets, resetInstanceCounter, generateAllMoves, serialize } from '@the-duke/engine';
+import { createInitialState, applyMove, applySetupPlacement, getStandardSetupTargets, resetInstanceCounter, generateAllMoves, serialize } from '@the-duke/engine';
 import { moveToString } from './notation';
 import * as fs from 'node:fs';
 
@@ -83,7 +83,7 @@ export async function runGame(
 
   // --- Setup phase ---
   while (state.status === 'setup') {
-    const targets = getSetupTargets(state);
+    const targets = getStandardSetupTargets(state);
     const agent = state.currentPlayer === 'P1' ? p1 : p2;
     const pick = agent.getSetupPlacement
       ? await agent.getSetupPlacement(state, targets)
