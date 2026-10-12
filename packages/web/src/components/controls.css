@@ -747,3 +747,35 @@
 .gameover-lost h2 { color: var(--dark); }
 .gameover p { font-size: 0.86rem; color: var(--muted); margin-bottom: 18px; }
 .gameover-actions { display: flex; flex-direction: column; gap: 8px; }
+
+/* ── Toast (AppUpdate) ── */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  /* stacked: clear of the buttons pinned to the bottom */
+  bottom: calc(max(8px, env(safe-area-inset-bottom, 0px)) + 60px);
+  z-index: 40;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  max-width: calc(100vw - 20px);
+  padding: 4px 6px 4px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(212, 178, 92, 0.4);
+  background: var(--surface-raised);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
+  animation: fade-in 0.3s ease-out;
+}
+.toast > span:only-child { padding-right: 10px; }
+.toast .btn { height: 34px; }
+
+/* Wide: in the corner under the side column, off the board */
+@media (min-aspect-ratio: 5/4) and (min-width: 560px) {
+  .toast { left: auto; right: 24px; bottom: 20px; transform: none; }
+}

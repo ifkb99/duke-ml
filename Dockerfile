@@ -11,7 +11,7 @@ RUN npm run build
 # Precompressed copies for nginx's gzip_static (the WebAssembly runtime is 28 MB;
 # the network's packed weights shrink ~15%).
 RUN find packages/web/dist -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.css' -o -name '*.html' \
-      -o -name '*.wasm' -o -name '*.svg' -o -name '*.json' -o -name '*.onnx' -o -name '*.bin' \) -exec gzip -9 -k {} +
+      -o -name '*.wasm' -o -name '*.svg' -o -name '*.json' -o -name '*.webmanifest' -o -name '*.onnx' -o -name '*.bin' \) -exec gzip -9 -k {} +
 
 FROM nginx:alpine
 COPY packages/web/nginx.conf /etc/nginx/conf.d/default.conf

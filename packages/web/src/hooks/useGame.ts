@@ -1,8 +1,8 @@
 import {useState, useCallback, useEffect, useRef, useMemo} from 'react';
-import type {Coord, GameMove, GameState, Player, SetupPhase, TileInstance} from '@the-duke/engine';
+import type {Coord, GameMove, GameState, Player, SerializedGameState, SetupPhase, TileInstance} from '@the-duke/engine';
 import {
   createInitialState, generateAllMoves, generateTileMoves, applyMove,
-  getSetupTargets, getStandardSetupTargets, applySetupPlacement, isPlayerInCheck, serialize,
+  getSetupTargets, getStandardSetupTargets, applySetupPlacement, isPlayerInCheck, serialize, deserialize,
 } from '@the-duke/engine';
 import type {AIWorkerRequest, AIWorkerResponse} from '../workers/ai.worker.js';
 import {type GameMode, sameCoord} from '../ui.js';
@@ -23,6 +23,32 @@ export type LastMove = GameMove | {type: 'setup'; position: Coord};
 export interface CommandChoice {coord: Coord; tileName: string}
 
 interface HistoryEntry {state: GameState; lastMove: LastMove | null}
+
+// The game in progress is kept in localStorage: updating the app reloads the
+// page, and phones drop apps in the background. App.tsx keeps the mode and the
+// person's side the same way.
+const SAVE_KEY = 'duke-game';
+/** Bump when a build can't continue games saved by the one before */
+const SAVE_VERSION = 1;
+interface SavedEntry {state: SerializedGameState; lastMove: LastMove | null}
+interface SavedGame extends SavedEntry {v: number; history: SavedEntry[]}
+
+function loadGame(): (HistoryEntry & {history: HistoryEntry[]}) | null {
+  try {
+    const saved: SavedGame | null = JSON.parse(localStorage.getItem(SAVE_KEY) ?? 'null');
+    if (saved?.v !== SAVE_VERSION) return null;
+    const entry = (e: SavedEntry): HistoryEntry => ({state: deserialize(e.state), lastMove: e.lastMove});
+    return {...entry(saved), history: saved.history.map(entry)};
+  } catch {
+    return null;
+  }
+}
+
+function saveGame(state: GameState, lastMove: LastMove | null, history: HistoryEntry[]) {
+  const entry = (e: HistoryEntry): SavedEntry => ({state: serialize(e.state), lastMove: e.lastMove});
+  const saved: SavedGame = {v: SAVE_VERSION, ...entry({state, lastMove}), history: history.map(entry)};
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(saved)); } catch { /* private mode, or full */ }
+}
 
 const params = new URLSearchParams(location.search);
 const workerFlags = {
@@ -71,9 +97,10 @@ export interface UseGameReturn {
 }
 
 export function useGame(mode: GameMode, aiPlayer: Player, opts: {evaluate: boolean}): UseGameReturn {
-  const [state, setState] = useState<GameState>(() => createInitialState());
-  const [lastMove, setLastMove] = useState<LastMove | null>(null);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [saved] = useState(loadGame);
+  const [state, setState] = useState<GameState>(() => saved?.state ?? createInitialState());
+  const [lastMove, setLastMove] = useState<LastMove | null>(saved?.lastMove ?? null);
+  const [history, setHistory] = useState<HistoryEntry[]>(saved?.history ?? []);
   const [selectedTile, setSelectedTile] = useState<Coord | null>(null);
   const [viewingBagTile, setViewingBagTile] = useState<{name: string; owner: Player} | null>(null);
   const [drawMode, setDrawMode] = useState(false);
@@ -84,6 +111,8 @@ export function useGame(mode: GameMode, aiPlayer: Player, opts: {evaluate: boole
   const [thinking, setThinking] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [evaluation, setEvaluation] = useState<number | null>(null);
+
+  useEffect(() => saveGame(state, lastMove, history), [state, lastMove, history]);
 
   const isSetup = state.status === 'setup';
   const isAiTurn = mode !== 'hotseat' && state.currentPlayer === aiPlayer;

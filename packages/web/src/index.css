@@ -50,8 +50,8 @@
   --threat-mine: #5fd08a;
   --threat-theirs: #f06a80;
 
-  --font-display: 'Cinzel', Georgia, serif;
-  --font-body: 'Outfit', system-ui, sans-serif;
+  --font-display: 'Cinzel Variable', Georgia, serif;
+  --font-body: 'Outfit Variable', system-ui, sans-serif;
 
   --topbar: 54px;
   --gap: 10px;
@@ -97,7 +97,7 @@ button, input, select { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 max(12px, env(safe-area-inset-left)) 0 max(12px, env(safe-area-inset-right));
+  padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
   border-bottom: 1px solid var(--line);
   background: linear-gradient(rgba(20, 18, 29, 0.9), rgba(20, 18, 29, 0.6));
 }
