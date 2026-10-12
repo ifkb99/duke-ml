@@ -4,6 +4,7 @@ import '@fontsource-variable/cinzel';
 import '@fontsource-variable/outfit';
 import { App } from './App.js';
 import './index.css';
+import './analytics.js';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
