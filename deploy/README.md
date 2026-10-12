@@ -6,9 +6,13 @@ Every push to `main` runs `.github/workflows/deploy.yml`:
 2. **image**: builds the Dockerfile and pushes `ghcr.io/ifkb99/duke-ml:<sha>` and `:latest`.
    The network files come from Git LFS (`packages/web/public/models`).
 3. **deploy**: SSHes to the server as `djneko@72.62.114.183` (host key pinned in the
-   workflow) with the `DEPLOY_SSH_KEY` secret and runs `~/duke-deploy/deploy.sh <sha>`, which pulls that
-   image and restarts the container on port 3001. Then it checks
-   https://duke.nyaaa.fun/ answers.
+   workflow) with the `DEPLOY_SSH_KEY` secret and runs `~/duke-deploy/deploy.sh <sha>`. Then
+   it checks https://duke.nyaaa.fun/ answers.
+
+`deploy.sh` pulls that image and starts it on port 3001 in place of whatever holds the
+port, a container it didn't start included. If the new version doesn't start, or doesn't
+answer within 20 s, it puts the previous version back and fails: the reason shows on the
+run's summary page.
 
 Until the setup below is done, the deploy job fails; the image still builds.
 
@@ -57,9 +61,8 @@ Compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server.
 1. Actions → Deploy → Run workflow (or push to main). Wait for **image** to finish.
 2. Make the image public so the server can pull it without logging in: github.com/ifkb99
    → Packages → duke-ml → Package settings → Change visibility → Public.
-3. Stop the old hand-built container (it holds port 3001): in its checkout,
-   `docker compose down`.
-4. Re-run the **deploy** job.
+3. Re-run the **deploy** job. It takes over port 3001 from the old hand-built container
+   and removes it once the new one answers.
 
 ## Day to day
 
@@ -68,3 +71,6 @@ Compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server.
 - **Roll back**: Actions → the Deploy run of the commit you want → Re-run the **deploy**
   job. Or on the server: `~/duke-deploy/deploy.sh <sha>`.
 - **By hand**: `~/duke-deploy/deploy.sh latest`.
+- **After `deploy.sh` or `compose.yml` change in the repo**: the server keeps its own copies
+  (the Actions key can only run the script, not replace it). Fetch them again:
+  `cd ~/duke-deploy && curl -fsSLO https://raw.githubusercontent.com/ifkb99/duke-ml/main/deploy/deploy.sh && curl -fsSLO https://raw.githubusercontent.com/ifkb99/duke-ml/main/deploy/compose.yml`
