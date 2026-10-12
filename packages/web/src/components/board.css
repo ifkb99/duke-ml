@@ -281,3 +281,9 @@
 .choice-icon { font-size: 0.75em; }
 
 @keyframes pop-in { from { opacity: 0; scale: 0.92; } }
+
+/* A phone held upright: the board runs edge to edge, without its frame */
+@media (max-aspect-ratio: 5/4) and (max-width: 520px) {
+  .board { padding: 0; border-radius: 0; box-shadow: 0 0 0 1px rgba(212, 178, 92, 0.28), 0 12px 30px rgba(0, 0, 0, 0.5); }
+  .board-cells { border-radius: 0; }
+}

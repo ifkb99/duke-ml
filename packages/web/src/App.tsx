@@ -1,12 +1,12 @@
-import {useEffect, useState} from 'react';
+import {useCallback, useEffect, useState} from 'react';
 import type {Player} from '@the-duke/engine';
 import {ActionBar} from './components/ActionBar.js';
-import {Bags} from './components/Bags.js';
+import {BagDrawer, BagStrip} from './components/Bags.js';
 import {Board} from './components/Board.js';
 import {GameOver, NewGameDialog} from './components/Dialogs.js';
 import {EvalBar} from './components/EvalBar.js';
 import {PlusIcon} from './components/Icons.js';
-import {Inspector, Legend, inspectorSubject} from './components/Inspector.js';
+import {Inspector, Legend, SymbolKey, inspectorSubject} from './components/Inspector.js';
 import {StatusLine} from './components/StatusLine.js';
 import {Crown} from './components/Tile.js';
 import {useGame} from './hooks/useGame.js';
@@ -36,6 +36,8 @@ export function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [newGameOpen, setNewGameOpen] = useState(false);
   const [resultDismissed, setResultDismissed] = useState(false);
+  const [bagOpen, setBagOpen] = useState(false);
+  const [keyOpen, setKeyOpen] = useState(false);
   const {mode, human, showEval} = settings;
   const game = useGame(mode, other(human), {evaluate: showEval});
   const {state} = game;
@@ -46,17 +48,24 @@ export function App() {
 
   useEffect(() => setResultDismissed(false), [state]);
 
-  // Esc closes the inspector; Ctrl/Cmd+Z undoes
+  // Closing the bag drawer also drops the bag tile it was showing
   const {clearSelection, undo, canUndo} = game;
+  const viewingBag = game.viewingBagTile !== null;
+  const closeBag = useCallback(() => {
+    setBagOpen(false);
+    if (viewingBag) clearSelection();
+  }, [viewingBag, clearSelection]);
+
+  // Esc closes the drawer, then the inspector; Ctrl/Cmd+Z undoes
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (newGameOpen) return;
-      if (e.key === 'Escape') clearSelection();
+      if (document.querySelector('dialog[open]')) return;
+      if (e.key === 'Escape') { if (bagOpen) closeBag(); else clearSelection(); }
       if (e.key === 'z' && (e.ctrlKey || e.metaKey) && canUndo) { e.preventDefault(); undo(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [newGameOpen, clearSelection, undo, canUndo]);
+  }, [bagOpen, closeBag, clearSelection, undo, canUndo]);
 
   const humanSide = mode === 'hotseat' ? null : human;
   const bottom: Player = humanSide ?? 'P1';
@@ -84,9 +93,12 @@ export function App() {
         </button>
       </header>
 
-      <main className={`layout ${inspecting ? 'inspecting' : ''}`}>
+      <main className={`layout ${inspecting ? 'inspecting' : ''} ${showEval ? 'with-eval' : ''}`}>
         <div className="area-status">
           <StatusLine game={game} mode={mode} human={humanSide} />
+          <button type="button" className="btn status-new" onClick={() => setNewGameOpen(true)} aria-label="New game">
+            <PlusIcon />
+          </button>
         </div>
 
         <div className="area-board">
@@ -126,16 +138,21 @@ export function App() {
         </div>
 
         <aside className="area-panel">
-          {inspecting ? <Inspector game={game} bottom={bottom} /> : (
-            <section className="card hint-card">
-              <p>Tap a tile to see how it moves. Tiles flip after every action, so each has two sides.</p>
-              <Legend />
-            </section>
+          {bagOpen ? <BagDrawer game={game} bottom={bottom} onClose={closeBag} /> : (
+            <>
+              {inspecting ? <Inspector game={game} bottom={bottom} /> : (
+                <section className="card hint-card">
+                  <p>Tap a tile to see how it moves. Tiles flip after every action, so each has two sides.</p>
+                  <Legend onOpen={() => setKeyOpen(true)} />
+                </section>
+              )}
+              <BagStrip game={game} bottom={bottom} onOpen={() => setBagOpen(true)} />
+            </>
           )}
-          <Bags game={game} bottom={bottom} />
         </aside>
       </main>
 
+      <SymbolKey open={keyOpen} onClose={() => setKeyOpen(false)} />
       <NewGameDialog open={newGameOpen} mode={mode} human={human} onClose={() => setNewGameOpen(false)} onStart={start} />
     </div>
   );

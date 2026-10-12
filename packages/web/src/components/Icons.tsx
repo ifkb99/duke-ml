@@ -37,3 +37,11 @@ export const CloseIcon = () => (
 export const RematchIcon = () => (
   <svg {...props}><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" /><path d="M3 21v-5h5" /></svg>
 );
+
+export const InfoIcon = () => (
+  <svg {...props}><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7.5v.01" /></svg>
+);
+
+export const ChevronUpIcon = () => (
+  <svg {...props}><path d="m6 15 6-6 6 6" /></svg>
+);
