@@ -1,6 +1,7 @@
 import {useCallback, useEffect, useState} from 'react';
 import type {Player} from '@the-duke/engine';
 import {ActionBar} from './components/ActionBar.js';
+import {AppUpdate} from './components/AppUpdate.js';
 import {BagDrawer, BagStrip} from './components/Bags.js';
 import {Board} from './components/Board.js';
 import {GameOver, NewGameDialog} from './components/Dialogs.js';
@@ -154,6 +155,7 @@ export function App() {
 
       <SymbolKey open={keyOpen} onClose={() => setKeyOpen(false)} />
       <NewGameDialog open={newGameOpen} mode={mode} human={human} onClose={() => setNewGameOpen(false)} onStart={start} />
+      <AppUpdate />
     </div>
   );
 }
