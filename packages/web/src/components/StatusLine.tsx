@@ -31,20 +31,24 @@ export function StatusLine({game, mode, human}: StatusLineProps) {
     text = `${ai} ran into a problem`;
     detail = game.aiError;
   } else if (state.status === 'setup') {
-    text = game.humanTurn ? (game.setupStep ?? '') : `${ai} is setting up`;
-    detail = human ? null : `${PLAYER_NAME[mover]} to place`;
+    text = game.humanTurn ? (human ? 'Set up your side' : `${PLAYER_NAME[mover]} sets up`) : `${ai} is setting up`;
+    detail = game.humanTurn ? game.setupStep : null;
     if (!game.humanTurn) tone = 'thinking';
   } else if (game.thinking || !game.humanTurn) {
     tone = 'thinking';
     text = `${ai} is thinking`;
   } else if (game.drawMode && game.selectedDrawTile) {
-    text = `You drew ${article(game.selectedDrawTile)} — place it next to your Duke`;
-    if (!human) text = `${PLAYER_NAME[mover]} drew ${article(game.selectedDrawTile)} — place it next to the Duke`;
+    text = `${human ? 'You' : PLAYER_NAME[mover]} drew ${article(game.selectedDrawTile)}`;
+    detail = `Place it next to ${human ? 'your' : 'the'} Duke`;
   } else if (game.commandTarget) {
     text = 'Choose where the commanded tile goes';
   } else {
     text = human ? 'Your move' : `${PLAYER_NAME[mover]} to move`;
-    detail = game.selectedTile ? null : 'Pick a tile, or draw a new one';
+    // Drawing needs a tile in the bag and a free square next to the Duke
+    detail = game.selectedTile ? null
+      : game.canDraw ? 'Pick a tile, or draw a new one'
+      : state.bags[mover].length === 0 ? 'Pick a tile to move: the bag is empty'
+      : 'Pick a tile: no free square by the Duke to draw';
   }
   if (game.inCheck && state.status === 'active' && !game.aiError) {
     if (tone !== 'thinking') tone = 'check';
@@ -63,7 +67,7 @@ export function StatusLine({game, mode, human}: StatusLineProps) {
         </span>
         {detail && <span className="status-detail">{detail}</span>}
       </span>
-      {state.status !== 'setup' && <span className="status-turn">Turn {state.turnNumber}</span>}
+      {state.status !== 'setup' && <span className="status-count">Turn {state.turnNumber}</span>}
     </div>
   );
 }

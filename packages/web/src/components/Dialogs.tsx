@@ -4,7 +4,7 @@ import {type GameMode, MODE_NAME, PLAYER_NAME} from '../ui.js';
 import {CloseIcon, PlusIcon, RematchIcon} from './Icons.js';
 import {Crown} from './Tile.js';
 
-function Modal({open, onClose, label, children}: {open: boolean; onClose: () => void; label: string; children: ReactNode}) {
+export function Modal({open, onClose, label, children}: {open: boolean; onClose: () => void; label: string; children: ReactNode}) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;

@@ -2,16 +2,16 @@ import {useState, useCallback, useEffect, useRef, useMemo} from 'react';
 import type {Coord, GameMove, GameState, Player, SetupPhase, TileInstance} from '@the-duke/engine';
 import {
   createInitialState, generateAllMoves, generateTileMoves, applyMove,
-  getSetupTargets, applySetupPlacement, isPlayerInCheck, serialize,
+  getSetupTargets, getStandardSetupTargets, applySetupPlacement, isPlayerInCheck, serialize,
 } from '@the-duke/engine';
 import type {AIWorkerRequest, AIWorkerResponse} from '../workers/ai.worker.js';
 import {type GameMode, sameCoord} from '../ui.js';
 
 const SETUP_STEP: Record<SetupPhase, string> = {
-  p1_duke: 'Place your Duke on a center square of the back row',
+  p1_duke: 'Place your Duke on your back row',
   p1_footman1: 'Place a Footman next to your Duke',
   p1_footman2: 'Place a second Footman next to your Duke',
-  p2_duke: 'Place your Duke on a center square of the back row',
+  p2_duke: 'Place your Duke on your back row',
   p2_footman1: 'Place a Footman next to your Duke',
   p2_footman2: 'Place a second Footman next to your Duke',
 };
@@ -217,10 +217,10 @@ export function useGame(mode: GameMode, aiPlayer: Player, opts: {evaluate: boole
   }, [state, canDraw, clearSelection]);
 
   const onBagTileClick = useCallback((name: string, owner: Player) => {
-    if (drawMode || isSetup) return;
+    if (drawMode) return;
     clearSelection();
     setViewingBagTile({name, owner});
-  }, [drawMode, isSetup, clearSelection]);
+  }, [drawMode, clearSelection]);
 
   // ── AI worker ──
   const workerRef = useRef<Worker | null>(null);
@@ -274,9 +274,11 @@ export function useGame(mode: GameMode, aiPlayer: Player, opts: {evaluate: boole
   useEffect(() => {
     if (!isAiTurn || !workerReady) return;
 
-    if (isSetup && setupTargets.length > 0) {   // trivial: random legal square
+    if (isSetup && setupTargets.length > 0) {
+      // A random square of the official setup (Duke in the center): the only starts the network trained on
       const timer = setTimeout(() => {
-        const pick = setupTargets[Math.floor(Math.random() * setupTargets.length)];
+        const targets = getStandardSetupTargets(state);
+        const pick = targets[Math.floor(Math.random() * targets.length)];
         advance(state, applySetupPlacement(state, pick), {type: 'setup', position: pick});
       }, 350);
       return () => clearTimeout(timer);

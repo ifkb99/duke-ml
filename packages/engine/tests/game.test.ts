@@ -4,7 +4,7 @@ import {
   createEmptyBoard, createInitialState,
   applyMove, generateAllMoves, resetInstanceCounter,
   serialize, deserialize,
-  getSetupTargets, applySetupPlacement,
+  getSetupTargets, getStandardSetupTargets, applySetupPlacement,
 } from '../src/index.js';
 
 function makeState(overrides: Partial<GameState> = {}): GameState {
@@ -37,15 +37,28 @@ describe('Setup phase', () => {
     expect(state.bags.P2).toHaveLength(18);
   });
 
-  it('p1_duke targets are the two center cells of row 0', () => {
+  it('p1_duke targets are every cell of row 0', () => {
     const state = createInitialState();
     const targets = getSetupTargets(state);
-    expect(targets).toEqual([{ row: 0, col: 2 }, { row: 0, col: 3 }]);
+    expect(targets).toEqual([0, 1, 2, 3, 4, 5].map(col => ({ row: 0, col })));
   });
 
-  it('rejects a Duke placed off-center on the back row', () => {
+  it('standard p1_duke targets are the two center cells of row 0', () => {
     const state = createInitialState();
-    expect(() => applySetupPlacement(state, { row: 0, col: 0 })).toThrow();
+    expect(getStandardSetupTargets(state)).toEqual([{ row: 0, col: 2 }, { row: 0, col: 3 }]);
+  });
+
+  it('rejects a Duke placed off the back row', () => {
+    const state = createInitialState();
+    expect(() => applySetupPlacement(state, { row: 1, col: 2 })).toThrow();
+  });
+
+  it('a Duke in the corner leaves exactly two squares for its Footmen', () => {
+    let state = applySetupPlacement(createInitialState(), { row: 0, col: 0 });
+    expect(getSetupTargets(state)).toHaveLength(2);
+    state = applySetupPlacement(state, { row: 1, col: 0 });
+    state = applySetupPlacement(state, { row: 0, col: 1 });
+    expect(state.setupPhase).toBe('p2_duke');
   });
 
   it('full setup flow places Duke and 2 Footmen for each player', () => {
@@ -72,7 +85,7 @@ describe('Setup phase', () => {
 
     // P2 Duke at (5, 3)
     const p2DukeTargets = getSetupTargets(state);
-    expect(p2DukeTargets).toEqual([{ row: 5, col: 2 }, { row: 5, col: 3 }]);
+    expect(p2DukeTargets).toEqual([0, 1, 2, 3, 4, 5].map(col => ({ row: 5, col })));
     state = applySetupPlacement(state, { row: 5, col: 3 });
     expect(state.setupPhase).toBe('p2_footman1');
 

@@ -76,8 +76,9 @@
   display: flex;
   align-items: center;
   gap: 11px;
-  min-height: 50px;
-  padding: 8px 14px;
+  height: 100%;
+  min-height: 46px;
+  padding: 4px 14px;
   border-radius: 12px;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -85,10 +86,14 @@
   transition: border-color 0.3s;
 }
 
+.status { flex: 1; min-width: 0; }
+.status-new { display: none; flex: none; width: 46px; height: 100%; padding: 0; border-radius: 12px; }
+
 .status-text { display: flex; flex-direction: column; min-width: 0; }
 .status-main { font-weight: 600; font-size: 0.98rem; line-height: 1.25; }
 .status-detail { font-size: 0.78rem; color: var(--muted); line-height: 1.3; }
-.status-turn { margin-left: auto; flex: none; font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.status-main, .status-detail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-count { margin-left: auto; flex: none; font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .status-check { --status-accent: var(--strike); }
 .status-check .status-detail { color: var(--strike); font-weight: 600; }
@@ -124,17 +129,24 @@
 .thinking-dots i:nth-child(3) { animation-delay: 0.3s; }
 @keyframes think { 0%, 60%, 100% { opacity: 0.25; transform: none; } 30% { opacity: 1; transform: translateY(-3px); } }
 
-/* ── Action bar ── */
+/* ── Action bar: a toolbar, each button its icon over a small label ── */
 
-.actions {
-  container-type: inline-size;
-}
 .actions-row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
-.actions .btn { flex: 1 1 0; padding: 0 8px; }
-.actions .btn-draw { flex-grow: 1.4; }
+.actions .btn {
+  position: relative;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 2px;
+  height: 48px;
+  padding: 0 2px;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}
+.actions .btn-draw { flex-grow: 1.25; }
+.actions .btn-count { position: absolute; top: 5px; left: calc(50% + 9px); font-size: 0.66rem; }
 
 /* the move you'll usually want: gold, but quieter than a dialog's main button */
 .btn-draw:not(:disabled) {
@@ -143,20 +155,13 @@
   background: linear-gradient(rgba(212, 178, 92, 0.2), rgba(212, 178, 92, 0.07));
 }
 
-/* Too narrow for every label: icons only, except Draw */
-@container (max-width: 340px) {
-  .actions .btn:not(.btn-draw) .btn-label { display: none; }
-  .actions .btn-draw { flex-grow: 2.4; }
-}
-
 /* ── Evaluation bar ── */
 
 .eval {
   position: relative;
   flex: none;
   width: var(--board);
-  height: 10px;
-  border-radius: 6px;
+  height: var(--eval-h);
   overflow: hidden;
   background: var(--eval-top);
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--line);
@@ -216,27 +221,48 @@
 
 .hint-card p { font-size: 0.85rem; color: var(--muted); line-height: 1.45; margin-bottom: 10px; }
 
-.inspector { border-top: 2px solid var(--owner, var(--gold)); animation: card-in 0.2s ease-out; }
 .owner-light { --owner: var(--light); }
 .owner-dark { --owner: var(--dark); }
 
 @keyframes card-in { from { opacity: 0; transform: translateY(6px); } }
 
+/*
+ * The picked tile. By default a short row: name and badges on the left, both
+ * sides drawn on the right at --diagram, which each place it appears sets from
+ * the height it has. The side column, where there is room, lays it out as a
+ * taller card instead (see the end of this section).
+ */
+.inspector {
+  --diagram: 84px;
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 8px 8px 8px 12px;
+  border-top: 2px solid var(--owner, var(--gold));
+  animation: fade-in 0.2s ease-out;   /* no slide: the panel has no room to spare */
+}
+
 .inspector-head {
   display: flex;
   align-items: center;
-  gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
+  gap: 5px 8px;
+  min-width: 0;
 }
-.inspector-head .icon-btn { margin-left: auto; }
+.inspector-tools { margin-left: auto; display: flex; }
+.inspector-name, .inspector-head .badges { order: 1; flex-basis: 100%; }
 
 .inspector-name {
   font-family: var(--font-display);
-  font-size: 1.15rem;
+  font-size: clamp(0.9rem, 4.2vw, 1.1rem);
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
+  line-height: 1.15;
   color: var(--owner, var(--text));
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .badges { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -251,22 +277,20 @@
   color: var(--muted);
   white-space: nowrap;
 }
-.badge-gold { background: rgba(212, 178, 92, 0.16); color: var(--gold-hi); margin-left: 8px; }
+.badge-gold { background: rgba(212, 178, 92, 0.16); color: var(--gold-hi); }
+.option-title .badge-gold { margin-left: 8px; }
 .badge-owner { background: color-mix(in srgb, var(--owner) 16%, transparent); color: var(--owner); }
+.badge-warn { background: color-mix(in srgb, var(--strike) 16%, transparent); color: var(--strike); }
 
-.sides {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
+.sides { display: flex; gap: 6px; }
 
 .side {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 10px 10px 8px;
-  border-radius: 12px;
+  gap: 3px;
+  padding: 5px 5px 3px;
+  border-radius: 10px;
   border: 1px solid var(--line);
   background: rgba(0, 0, 0, 0.15);
   opacity: 0.6;
@@ -279,83 +303,337 @@
   box-shadow: 0 0 20px rgba(212, 178, 92, 0.08);
 }
 
-.side-diagram { width: 100%; max-width: 168px; aspect-ratio: 1; border-radius: 8px; }
+.side-diagram { width: var(--diagram); aspect-ratio: 1; border-radius: 6px; }
 .side-diagram .diagram-bg { fill: var(--sq-dark); }
 .side-diagram .diagram-line line { stroke: rgba(255, 255, 255, 0.07); stroke-width: 0.03; }
 .side-diagram .diagram-self { fill: var(--owner, var(--surface-3)); opacity: 0.85; stroke: rgba(255, 255, 255, 0.6); stroke-width: 0.05; }
 
-.side figcaption { display: flex; flex-direction: column; align-items: center; line-height: 1.25; }
-.side figcaption strong { font-size: 0.8rem; font-weight: 600; }
-.side figcaption span { font-size: 0.7rem; color: var(--muted); }
-.side-active figcaption span { color: var(--gold); }
+.side { position: relative; }
+.side figcaption { font-size: 0.66rem; line-height: 1.25; white-space: nowrap; }
+.side figcaption strong {
+  position: absolute;
+  top: 7px;
+  left: 9px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.side-active figcaption strong { color: var(--gold-hi); }
+.side figcaption span { color: var(--muted); }
+.side-active figcaption > span { color: var(--gold); }
+.side-word, .side-long { display: none; }
 
-.inspector-note { margin-top: 10px; font-size: 0.78rem; color: var(--muted); line-height: 1.4; }
+.inspector-note { display: none; color: var(--muted); }
+.inspector .legend { display: none; }
 
-.legend { margin-top: 12px; }
-.legend summary {
+/* A wide row (a tablet held upright): room for the help text under the name */
+.inspector { container-type: inline-size; }
+.sides { grid-column: 2; grid-row: 1 / span 2; }
+@container (min-width: 540px) {
+  .inspector-note { display: block; font-size: 0.8rem; line-height: 1.45; }
+}
+.key-note { font-size: 0.85rem; color: var(--muted); line-height: 1.45; margin-bottom: 14px; }
+
+.legend {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
-  list-style: none;
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
   cursor: pointer;
   font-size: 0.72rem;
   color: var(--muted);
 }
-.legend summary::-webkit-details-marker { display: none; }
-.legend summary::after { content: 'What’s this?'; color: var(--gold); text-decoration: underline dotted; }
-.legend[open] summary::after { content: 'Hide'; }
+.legend-more { color: var(--gold); text-decoration: underline dotted; }
 .legend-item { display: inline-flex; align-items: center; gap: 4px; }
 .legend-icon { width: 14px; height: 14px; flex: none; }
 
-.legend-help { display: grid; gap: 8px; margin-top: 10px; font-size: 0.78rem; }
-.legend-help dt { display: flex; align-items: center; gap: 6px; font-weight: 600; }
-.legend-help dd { color: var(--muted); margin-left: 20px; line-height: 1.4; }
+.legend-help { display: grid; gap: 10px; font-size: 0.85rem; }
+.legend-help dt { display: flex; align-items: center; gap: 7px; font-weight: 600; }
+.legend-help .legend-icon { width: 17px; height: 17px; }
+.legend-help dd { color: var(--muted); margin-left: 24px; line-height: 1.4; }
 
-/* ── Bags ── */
+/* Under the board: as large as the panel's height and the screen's width allow */
+.area-panel > .inspector {
+  --diagram: clamp(56px, min(var(--panel-h) - 48px, 50vw - 104px), 132px);
+}
 
-.bags-hint { font-size: 0.75rem; color: var(--muted); margin-bottom: 10px; }
-.bags-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+/* The side column with room to spare: the taller card, help text and symbol key included */
+@media (min-aspect-ratio: 5/4) and (min-width: 560px) and (min-height: 580px) {
+  .area-panel > .inspector {
+    --diagram: 100%;
+    display: block;
+    padding: 14px;
+  }
+  .area-panel > .inspector .inspector-head { margin-bottom: 12px; gap: 10px; }
+  .area-panel > .inspector .inspector-name,
+  .area-panel > .inspector .badges { order: 0; flex-basis: auto; }
+  .area-panel > .inspector .inspector-name { font-size: 1.15rem; }
+  .area-panel > .inspector .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .area-panel > .inspector .side { gap: 8px; padding: 10px 10px 8px; border-radius: 12px; }
+  .area-panel > .inspector .side-diagram { max-width: 168px; border-radius: 8px; }
+  .area-panel > .inspector .side figcaption { display: flex; flex-direction: column; align-items: center; }
+  .area-panel > .inspector .side figcaption strong { position: static; font-size: 0.8rem; font-weight: 600; color: inherit; }
+  .area-panel > .inspector .side figcaption span { font-size: 0.7rem; }
+  .area-panel > .inspector .side-word { display: inline; font-size: inherit; color: inherit; }
+  .area-panel > .inspector .side-long { display: inline; }
+  .area-panel > .inspector .side-short { display: none; }
+}
+@media (min-aspect-ratio: 5/4) and (min-width: 560px) and (min-height: 720px) {
+  .area-panel > .inspector .inspector-info { display: none; }
+  .area-panel > .inspector .inspector-note {
+    display: block;
+    margin-top: 10px;
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+  .area-panel > .inspector .legend { display: flex; margin-top: 12px; }
+}
+@media (min-aspect-ratio: 5/4) and (min-width: 560px) and (max-height: 579px) {
+  .area-panel > .inspector { --diagram: clamp(56px, min(var(--panel-h) - 48px, var(--panel) / 2 - 92px), 120px); }
+}
 
-.bag { container-type: inline-size; min-width: 0; }
-.bag-head {
+/* ── Bag strip ── */
+
+.mini-tile {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 26px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 22%;
+  background: var(--tile-bg);
+  border: 1px solid var(--tile-rim);
+  color: var(--tile-text);
+  font-size: clamp(8px, 2.5vw, 10.5px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.mini-tile-gone { background: none; border: 1px dashed var(--line-strong); opacity: 0.6; }
+.mini-tile-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 11px;
+  padding: 1px 2px;
+  border-radius: 6px;
+  background: var(--gold);
+  color: #1a1408;
+  font-size: 8px;
+  font-style: normal;
+  line-height: 1;
+  text-align: center;
+}
+
+.bag-strip {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding-bottom: 7px;
-  margin-bottom: 8px;
-  border-bottom: 1px solid var(--line-strong);
-  font-size: 0.82rem;
-  font-weight: 600;
-}
-.bag-active .bag-head { border-color: var(--owner); color: var(--owner); }
-.bag-count { margin-left: auto; color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
-.bag-empty { font-size: 0.75rem; color: var(--muted); font-style: italic; }
-
-.bag-tiles { list-style: none; display: flex; flex-wrap: wrap; gap: 5px; }
-.bag-tile {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 9px 3px 3px;
-  border-radius: 9px;
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  font-size: 0.76rem;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  width: 100%;
+  padding: 8px 6px 8px 10px;
+  color: var(--text);
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  text-align: left;
+  transition: border-color 0.15s;
+  -webkit-tap-highlight-color: transparent;
 }
-.bag-tile:hover:not(:disabled) { border-color: var(--line-strong); background: var(--surface-3); }
-.bag-tile.on { border-color: var(--owner); background: color-mix(in srgb, var(--owner) 12%, var(--surface-2)); }
-.bag-tile:disabled { cursor: default; opacity: 0.6; }
-.bag-tile-name { color: var(--muted); }
-.bag-tile.on .bag-tile-name { color: var(--text); }
-.bag-tile-count { font-size: 0.7rem; color: var(--gold); font-weight: 600; }
+.bag-strip:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+@media (hover: hover) { .bag-strip:hover { border-color: rgba(212, 178, 92, 0.5); } }
+.bag-strip .icon { color: var(--muted); }
+.bag-strip-title { display: none; }
+.bag-strip-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.bag-strip-row { display: flex; align-items: center; gap: 3px; }
+.bag-strip-row .status-dot { width: 8px; height: 8px; }
+.bag-strip-count {
+  flex: none;
+  width: 1.5em;
+  margin: 0 3px 0 2px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--owner);
+  font-variant-numeric: tabular-nums;
+}
 
-@container (max-width: 200px) {
-  .bag-tile { padding-right: 3px; }
-  .bag-tile-name { display: none; }
-  .bag-tile-count { padding-right: 4px; }
+@media (min-aspect-ratio: 5/4) and (min-width: 560px) {
+  .bag-strip { padding: 12px 10px 12px 14px; }
+  .bag-strip-title {
+    display: block;
+    flex-basis: 100%;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+  }
+  .mini-tile { font-size: 9.5px; }
 }
+
+/* ── Bag drawer ── */
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+  background: rgba(5, 4, 10, 0.6);
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Stacked: a sheet over the lower part of the screen */
+.drawer {
+  --row: 30px;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 0 12px max(12px, env(safe-area-inset-bottom, 0px));
+  border-radius: 18px 18px 0 0;
+  border-bottom: 0;
+  background: var(--surface-raised);
+  box-shadow: 0 -18px 50px rgba(0, 0, 0, 0.6);
+  animation: sheet-in 0.24s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+@keyframes sheet-in { from { transform: translateY(100%); } }
+
+.drawer-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 14px;
+  touch-action: none;
+}
+.drawer-head h2 {
+  margin-right: auto;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  letter-spacing: 0.06em;
+  color: var(--gold-hi);
+}
+.drawer-grip {
+  position: absolute;
+  top: 6px;
+  left: calc(50% - 20px);
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+.drawer-total { display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; color: var(--muted); }
+.drawer-total .status-dot { width: 8px; height: 8px; }
+.drawer-total b { color: var(--owner); font-variant-numeric: tabular-nums; }
+
+/* Every kind of tile, in two columns read downwards: its name, then each side's count */
+.bag-table {
+  list-style: none;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, var(--row));
+  grid-template-columns: 1fr 1fr;
+  column-gap: 14px;
+}
+.bag-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+}
+.bag-row-name {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: 0.82rem;
+  color: var(--text);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bag-row.on .bag-row-name { color: var(--gold-hi); font-weight: 600; }
+.bag-pip {
+  flex: none;
+  width: calc(var(--row) - 6px);
+  height: calc(var(--row) - 8px);
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--tile-bg);
+  border: 1px solid var(--tile-rim);
+  color: var(--tile-text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.bag-pip-gone { background: none; border: 1px dashed var(--line-strong); }
+.bag-pip.on { outline: 2px solid var(--gold); outline-offset: 1px; }
+.bag-row-name:disabled, .bag-pip:disabled { cursor: default; }
+.bag-row-name:focus-visible, .bag-pip:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+
+/* The picked tile, or a hint: the same height either way, so the sheet doesn't jump */
+.drawer-detail { --diagram: clamp(56px, 50vw - 104px, 96px); min-height: calc(var(--diagram) + 48px); display: grid; }
+.drawer-detail .inspector { --diagram: inherit; animation: none; }
+.drawer-hint {
+  align-self: center;
+  padding: 0 12px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+/* Wide: the drawer takes the side column's panel, and the board stays in play */
+@media (min-aspect-ratio: 5/4) and (min-width: 560px) {
+  .drawer-backdrop { display: none; }
+  .drawer {
+    --row: clamp(22px, (var(--panel-h) - 220px) / 7, 30px);
+    position: static;
+    flex: 1;
+    min-height: 0;
+    max-width: none;
+    margin: 0;
+    padding: 0 14px 14px;
+    border-radius: 14px;
+    border-bottom: 1px solid var(--line);
+    box-shadow: none;
+    animation: card-in 0.2s ease-out;
+  }
+  .drawer-head { padding-top: 10px; touch-action: auto; }
+  .drawer-grip { display: none; }
+  .drawer-detail {
+    --diagram: clamp(56px, min(var(--panel-h) - 7 * var(--row) - 124px, var(--panel) / 2 - 96px), 110px);
+    margin-top: auto;
+  }
+}
+
+/* Wide but short (a phone on its side): the drawer covers the whole column, top bar included */
+@media (min-aspect-ratio: 5/4) and (min-width: 560px) and (max-height: 470px) {
+  .drawer-backdrop { display: block; background: rgba(5, 4, 10, 0.35); }
+  .drawer {
+    --panel-h: calc(100dvh - 16px);
+    position: fixed;
+    inset: 0 0 0 auto;
+    width: calc(var(--panel) + 48px);
+    border-radius: 14px 0 0 14px;
+    animation: drawer-in 0.22s ease-out;
+  }
+}
+@keyframes drawer-in { from { transform: translateX(100%); } }
 
 /* ── Modal ── */
 

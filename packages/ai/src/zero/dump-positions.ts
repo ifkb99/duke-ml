@@ -14,7 +14,7 @@
 import {createWriteStream} from 'node:fs';
 import {
   applyMove, applySetupPlacement, createInitialState, generateAllMoves,
-  getDrawTargets, getSetupTargets, serialize, type GameMove,
+  getDrawTargets, getStandardSetupTargets, serialize, type GameMove,
 } from '@the-duke/engine';
 
 const numGames = parseInt(process.argv[2] ?? '50', 10);
@@ -26,7 +26,7 @@ const out = createWriteStream(outPath);
 
 for (let g = 0; g < numGames; g++) {
   let s = createInitialState();
-  while (s.status === 'setup') s = applySetupPlacement(s, pick(getSetupTargets(s)));
+  while (s.status === 'setup') s = applySetupPlacement(s, pick(getStandardSetupTargets(s)));
 
   for (let turn = 0; turn < maxTurns && s.status === 'active'; turn++) {
     const legal = generateAllMoves(s);

@@ -70,6 +70,8 @@ body {
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .035 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
   color: var(--text);
   overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: manipulation;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -131,56 +133,74 @@ button, input, select { font: inherit; color: inherit; }
 }
 .matchup b { font-weight: 600; }
 
-/* Stacked (phones, portrait tablets): status, board, actions, then the panel */
+/*
+ * Stacked (phones, portrait tablets): status, board, the bag strip or the picked
+ * tile's details, and the buttons pinned to the bottom. Nothing scrolls: the
+ * board takes the full width unless that would leave the panel under it less
+ * than --panel-min, and the tile details size themselves to the panel's height.
+ */
 .layout {
+  --status-h: 46px;
+  --actions-h: 48px;
+  --eval-h: 0px;
+  --pad-b: max(8px, env(safe-area-inset-bottom, 0px));
+  --chrome: calc(var(--topbar) + var(--status-h) + var(--actions-h) + var(--eval-h) + 4 * var(--gap) + var(--pad-b));
+  --panel-min: clamp(118px, 28dvh - 80px, 230px);
+  --board: min(100vw, 100dvh - var(--chrome) - var(--panel-min), 760px);
+  --panel-h: calc(100dvh - var(--chrome) - var(--board));
+  --column: min(100vw - 20px, max(var(--board), 340px));
+  --gap: 6px;
   flex: 1;
   min-height: 0;
   display: grid;
   gap: var(--gap);
-  padding: var(--gap) 12px max(12px, env(safe-area-inset-bottom));
-  justify-content: center;
-  grid-template-columns: var(--board);
-  grid-template-rows: auto auto auto minmax(0, 1fr);
-  grid-template-areas: "status" "board" "actions" "panel";
-  --board: min(100vw - 24px, 100dvh - var(--topbar) - 290px, 760px);
+  padding: var(--gap) 0 var(--pad-b);
+  justify-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--status-h) auto minmax(0, 1fr) var(--actions-h);
+  grid-template-areas: "status" "board" "panel" "actions";
 }
+.layout.with-eval { --eval-h: 6px; }
 
-.area-status { grid-area: status; }
+.area-status, .area-actions, .area-panel { width: var(--column); }
+.area-status { grid-area: status; display: flex; gap: 6px; }
 .area-actions { grid-area: actions; }
 .area-board {
   grid-area: board;
   display: flex;
   flex-direction: column;
-  gap: 8px;
   align-items: center;
 }
 .area-panel {
   grid-area: panel;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--surface-3) transparent;
+  gap: 10px;
 }
 
 .board-wrap { position: relative; }
 
 .hint-card { display: none; }
-.layout.inspecting .bags { display: none; }
+.layout.inspecting .bag-strip { display: none; }
 
 /* Wide (desktop, landscape): board on the left, everything else in a column beside it */
 @media (min-aspect-ratio: 5/4) and (min-width: 560px) {
   .layout {
-    --panel: clamp(270px, 30vw, 400px);
+    --panel: clamp(300px, 30vw, 400px);
     --board: min(100dvh - var(--topbar) - 44px, 100vw - var(--panel) - 110px);
+    /* what the column has left under the status line and the buttons */
+    --panel-h: calc(100dvh - var(--topbar) - 160px);
+    --column: var(--panel);
+    --gap: 10px;
     grid-template-columns: auto var(--panel);
     grid-template-rows: auto auto minmax(0, 1fr);
     grid-template-areas: "board status" "board actions" "board panel";
     column-gap: 24px;
     row-gap: 12px;
     padding: 20px 24px;
+    justify-content: center;
     align-content: start;
   }
 
@@ -188,26 +208,34 @@ button, input, select { font: inherit; color: inherit; }
     flex-direction: row;
     align-items: stretch;
     gap: 10px;
-    height: calc(var(--board));
+    height: var(--board);
   }
 
+  .area-panel { height: var(--panel-h); }
   .hint-card { display: block; }
-  .layout.inspecting .bags { display: block; }
+  .layout.inspecting .bag-strip { display: flex; }
 }
 
-/* Short stacked screens: a compact inspector, so it fits under the board */
-@media (max-aspect-ratio: 5/4) and (max-height: 760px), (min-aspect-ratio: 5/4) and (max-height: 520px) {
-  .side-diagram { max-width: 104px; }
-  .inspector-head { margin-bottom: 8px; }
-  .inspector .legend { display: none; }
-  .card { padding: 10px 12px; }
+/* Wide but short (a phone on its side): one card at a time in the column */
+@media (min-aspect-ratio: 5/4) and (min-width: 560px) and (max-height: 470px) {
+  .hint-card, .layout.inspecting .bag-strip { display: none; }
 }
 
 @media (max-width: 520px) {
   .matchup { display: none; }
   .brand h1 { font-size: 1rem; }
   .topbar .btn { margin-left: auto; }
-  :root { --topbar: 50px; }
+  :root { --topbar: 44px; }
+}
+
+/*
+ * Too short for a top bar (most phones upright in a browser, any phone on its
+ * side): its height goes to the board, and New game moves beside the status line.
+ */
+@media (max-aspect-ratio: 5/4) and (max-height: 700px), (min-aspect-ratio: 5/4) and (max-height: 470px) {
+  :root { --topbar: 0px; }
+  .topbar { display: none; }
+  .status-new { display: inline-flex; }
 }
 
 @media (prefers-reduced-motion: reduce) {

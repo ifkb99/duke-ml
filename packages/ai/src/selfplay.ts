@@ -1,5 +1,5 @@
 import type {Coord, GameMove, GameState} from '@the-duke/engine';
-import {applySetupPlacement, createInitialState, generateAllMoves, applyMove, getSetupTargets} from '@the-duke/engine';
+import {applySetupPlacement, createInitialState, generateAllMoves, applyMove, getStandardSetupTargets} from '@the-duke/engine';
 import {evaluate} from './evaluate.js';
 import {findBestMove, ttClear} from './minimax.js';
 import {encodeState, encodeMoveIndex, STATE_TENSOR_SIZE} from './encoding.js';
@@ -39,7 +39,7 @@ const SETUP_MAXIMIZING: Record<string, boolean> = {
 function setupMinimax(state: GameState): {score: number; coord: Coord | null} {
   if (state.status === 'active') return {score: evaluate(state), coord: null};
 
-  const targets = getSetupTargets(state);
+  const targets = getStandardSetupTargets(state);
   if (targets.length === 0) return {score: evaluate(state), coord: null};
 
   const maximizing = SETUP_MAXIMIZING[state.setupPhase!] ?? true;
