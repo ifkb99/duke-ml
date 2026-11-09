@@ -594,6 +594,24 @@ describe('Command', () => {
     }
   });
 
+  it('a square that is both a step and a command square allows both', () => {
+    // General B steps L and R, and also commands L and R
+    const state = generalBState();
+    placeTile(state, {
+      id: 'P1-Footman-1', defName: 'Footman', owner: 'P1', side: 'A',
+      position: { row: 1, col: 2 },
+    });
+    const moves = generateAllMoves(state);
+    const steps = moves.filter(m => m.type === 'move' && m.from.row === 2 && m.from.col === 2)
+      .map(m => m.type === 'move' ? `${m.to.row},${m.to.col}` : '');
+    expect(steps).toContain('2,1');
+    expect(steps).toContain('2,3');
+    const cmdDests = moves.filter(m => m.type === 'command')
+      .map(m => m.type === 'command' ? `${m.targetTo.row},${m.targetTo.col}` : '');
+    expect(cmdDests).toContain('2,1');
+    expect(cmdDests).toContain('2,3');
+  });
+
   it('cannot command onto a non-command square or a friendly-occupied one', () => {
     const state = generalBState();
     placeTile(state, {

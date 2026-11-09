@@ -1,0 +1,186 @@
+/*
+ * The tutorial reuses the game's layout (index.css): the lesson card takes the
+ * status line's place, so stacked it sits above the board and wide it heads
+ * the column beside it. The card has a fixed height and its text scrolls, so
+ * the board never moves between lessons.
+ */
+.layout.tutorial-layout {
+  --lesson-h: clamp(160px, 32dvh, 260px);
+  --status-h: var(--lesson-h);
+  grid-template-areas: "lesson" "board" "panel" "actions";
+}
+
+.area-lesson { grid-area: lesson; width: var(--column); min-height: 0; }
+
+@media (min-aspect-ratio: 5/4) and (min-width: 560px) {
+  .layout.tutorial-layout {
+    --lesson-h: clamp(140px, 38dvh, 330px);
+    --panel-h: calc(100dvh - var(--topbar) - 40px - var(--lesson-h) - var(--actions-h) - 24px);
+    grid-template-rows: var(--lesson-h) auto minmax(0, 1fr);
+    grid-template-areas: "board lesson" "board actions" "board panel";
+  }
+}
+
+/* The panel's cards can outgrow what's left under the lesson: let them scroll */
+.tutorial-layout .area-panel { overflow-y: auto; }
+
+/* ── The lesson card ── */
+
+.lesson {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  padding: 10px 12px 12px 14px;
+  overflow: hidden;
+  border-left: 3px solid var(--gold);
+}
+
+.lesson-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.lesson-head h2 {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  color: var(--gold-hi);
+}
+.lesson-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.2;
+}
+.lesson-count {
+  flex: none;
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.lesson-nav { flex: none; display: flex; align-items: center; gap: 2px; }
+.lesson-nav .icon-btn:disabled { opacity: 0.3; cursor: default; background: none; }
+.lesson-next { height: 32px; padding: 0 8px 0 12px; gap: 3px; margin-left: 4px; }
+.lesson-next:not(.btn-gold) { color: var(--muted); }
+
+/* Exit lives in the top bar, unless the top bar is hidden (index.css) */
+.lesson-nav .lesson-exit { display: none; }
+@media (max-aspect-ratio: 5/4) and (max-height: 700px), (min-aspect-ratio: 5/4) and (max-height: 470px) {
+  .lesson-nav .lesson-exit { display: inline-grid; }
+}
+
+.lesson-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  color: var(--muted);
+  /* fade the last line out when there's more to scroll */
+  mask-image: linear-gradient(to bottom, black calc(100% - 14px), transparent);
+  padding-bottom: 10px;
+}
+.lesson-body strong { color: var(--text); font-weight: 600; }
+.lesson-body .legend-icon { width: 1.05em; height: 1.05em; vertical-align: -0.18em; margin: 0 1px; }
+.inline-icon .icon { width: 1.1em; height: 1.1em; vertical-align: -0.2em; color: var(--text); }
+
+.lesson-foot { flex: none; }
+
+.tasks { list-style: none; display: grid; gap: 5px; }
+.tasks li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+}
+.task-box {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  margin-top: 0.5px;
+  border-radius: 5px;
+  border: 1.5px solid var(--gold);
+  color: #1a1408;
+  transition: background 0.2s;
+}
+.task-box .icon { width: 13px; height: 13px; stroke-width: 3; }
+.tasks .task-done { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(143, 140, 164, 0.6); }
+.tasks .task-done .task-box { background: var(--gold); animation: pop-in 0.25s ease-out; }
+
+.lesson-success {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(212, 178, 92, 0.1);
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--gold-hi);
+  animation: card-in 0.25s ease-out;
+}
+.lesson-success .icon { margin-top: 1px; color: var(--gold); }
+
+/* Where you are: a dot per lesson along the top edge */
+.lesson-dots {
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 12px;
+  display: flex;
+  gap: 3px;
+  list-style: none;
+}
+.lesson-dots li {
+  flex: 1;
+  height: 3px;
+  border-radius: 0 0 2px 2px;
+  background: var(--line-strong);
+}
+.lesson-dots li.done { background: rgba(212, 178, 92, 0.55); }
+.lesson-dots li.on { background: var(--gold-hi); }
+
+/* Stacked and tight: every pixel to the text */
+@media (max-aspect-ratio: 5/4) {
+  .lesson { padding: 8px 8px 10px 12px; gap: 6px; }
+  .lesson-head h2 { font-size: 0.98rem; }
+  /* the dots along the top already count; Skip shrinks to its arrow */
+  .lesson-count { display: none; }
+  .lesson-next:not(.btn-gold) { width: 32px; padding: 0; }
+  .lesson-next:not(.btn-gold) .lesson-next-label { display: none; }
+  .lesson-body, .tasks li, .lesson-success { font-size: 0.82rem; }
+  .lesson-success { padding: 6px 8px; }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

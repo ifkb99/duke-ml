@@ -7,8 +7,6 @@
   - deploy a second build and take the "A new version is ready" update mid-game
 
 ## Most important
-- rules page for new players, then a short interactive tutorial
-  - first: move/command space only allows command atm
 - multiplayer over websocket: a small room server and a link to share
 
 ## Show what the net is thinking
@@ -31,7 +29,7 @@
 
 ## Safety net and housekeeping
 - address console errors on web
-- `packages/web` has no tests; one Playwright test that plays a whole game against the net
+- `packages/web` tests only the tutorial's lessons (`src/tutorial/lessons.test.ts`); add one Playwright test that plays a whole game against the net
 - run the Python parity tests in CI (only the npm tests run on push)
 - nginx.conf and vite.config.ts still set COOP/COEP for threads the app no longer uses
 - remove leftovers: `main.py`, `cursor_reinforcement_learning_for_the_d.md`, the root `docker-compose.yml`, `training/supervised_v1_baseline`

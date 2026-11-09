@@ -27,7 +27,7 @@ interface HistoryEntry {state: GameState; lastMove: LastMove | null}
 // The game in progress is kept in localStorage: updating the app reloads the
 // page, and phones drop apps in the background. App.tsx keeps the mode and the
 // person's side the same way.
-const SAVE_KEY = 'duke-game';
+export const SAVE_KEY = 'duke-game';
 /** Bump when a build can't continue games saved by the one before */
 const SAVE_VERSION = 1;
 interface SavedEntry {state: SerializedGameState; lastMove: LastMove | null}
@@ -56,6 +56,22 @@ const workerFlags = {
   backend: params.get('backend') ?? undefined,
   threads: Number(params.get('threads')) || undefined,
 };
+
+/**
+ * A tutorial lesson instead of a game: it starts from a set position, saves
+ * nothing, runs no AI, and decides what each of the person's actions leads to
+ * (in a lesson the other side usually doesn't answer).
+ */
+export interface LessonOptions {
+  initial: GameState;
+  lastMove?: LastMove | null;
+  play: (state: GameState, move: LastMove) => GameState;
+}
+
+export interface GameOptions {
+  evaluate: boolean;
+  lesson?: LessonOptions;
+}
 
 export interface UseGameReturn {
   state: GameState;
@@ -96,10 +112,14 @@ export interface UseGameReturn {
   allEnemyTargets: Coord[];
 }
 
-export function useGame(mode: GameMode, aiPlayer: Player, opts: {evaluate: boolean}): UseGameReturn {
-  const [saved] = useState(loadGame);
-  const [state, setState] = useState<GameState>(() => saved?.state ?? createInitialState());
-  const [lastMove, setLastMove] = useState<LastMove | null>(saved?.lastMove ?? null);
+export function useGame(mode: GameMode, aiPlayer: Player, opts: GameOptions): UseGameReturn {
+  // Whether this is a lesson is fixed for the hook's life; the lesson's play() may change
+  const [isLesson] = useState(() => opts.lesson !== undefined);
+  const lessonRef = useRef(opts.lesson);
+  lessonRef.current = opts.lesson;
+  const [saved] = useState(() => (isLesson ? null : loadGame()));
+  const [state, setState] = useState<GameState>(() => saved?.state ?? opts.lesson?.initial ?? createInitialState());
+  const [lastMove, setLastMove] = useState<LastMove | null>(saved?.lastMove ?? opts.lesson?.lastMove ?? null);
   const [history, setHistory] = useState<HistoryEntry[]>(saved?.history ?? []);
   const [selectedTile, setSelectedTile] = useState<Coord | null>(null);
   const [viewingBagTile, setViewingBagTile] = useState<{name: string; owner: Player} | null>(null);
@@ -112,7 +132,7 @@ export function useGame(mode: GameMode, aiPlayer: Player, opts: {evaluate: boole
   const [aiError, setAiError] = useState<string | null>(null);
   const [evaluation, setEvaluation] = useState<number | null>(null);
 
-  useEffect(() => saveGame(state, lastMove, history), [state, lastMove, history]);
+  useEffect(() => { if (!isLesson) saveGame(state, lastMove, history); }, [isLesson, state, lastMove, history]);
 
   const isSetup = state.status === 'setup';
   const isAiTurn = mode !== 'hotseat' && state.currentPlayer === aiPlayer;
@@ -225,12 +245,15 @@ export function useGame(mode: GameMode, aiPlayer: Player, opts: {evaluate: boole
   }, [history, mode, aiPlayer, resetSelection]);
 
   const executeMove = useCallback((move: GameMove) => {
-    advance(state, applyMove(state, move), move);
+    const lesson = lessonRef.current;
+    advance(state, lesson ? lesson.play(state, move) : applyMove(state, move), move);
     resetSelection();
   }, [state, advance, resetSelection]);
 
   const executeSetup = useCallback((coord: Coord) => {
-    advance(state, applySetupPlacement(state, coord), {type: 'setup', position: coord});
+    const move: LastMove = {type: 'setup', position: coord};
+    const lesson = lessonRef.current;
+    advance(state, lesson ? lesson.play(state, move) : applySetupPlacement(state, coord), move);
     resetSelection();
   }, [state, advance, resetSelection]);
 
@@ -256,6 +279,7 @@ export function useGame(mode: GameMode, aiPlayer: Player, opts: {evaluate: boole
   const requestId = useRef(0);
   const [workerReady, setWorkerReady] = useState(false);
   useEffect(() => {
+    if (isLesson) return;
     const worker = new Worker(new URL('../workers/ai.worker.ts', import.meta.url), {type: 'module'});
     workerRef.current = worker;
     setWorkerReady(true);
@@ -264,7 +288,7 @@ export function useGame(mode: GameMode, aiPlayer: Player, opts: {evaluate: boole
       workerRef.current = null;
       setWorkerReady(false);
     };
-  }, []);
+  }, [isLesson]);
 
   /** Posts a request; the reply comes back to onReply only if no newer request was sent since. */
   const ask = useCallback((req: Omit<AIWorkerRequest, 'id'>, onReply: (r: AIWorkerResponse) => void) => {

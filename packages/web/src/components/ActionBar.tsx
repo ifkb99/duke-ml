@@ -3,8 +3,9 @@ import {BagIcon, EyeIcon, GaugeIcon, UndoIcon} from './Icons.js';
 
 interface ActionBarProps {
   game: UseGameReturn;
-  showEval: boolean;
-  onToggleEval: () => void;
+  showEval?: boolean;
+  /** Leave out to hide the Eval button (the tutorial runs no network) */
+  onToggleEval?: () => void;
 }
 
 export function ActionBar({game, showEval, onToggleEval}: ActionBarProps) {
@@ -28,10 +29,12 @@ export function ActionBar({game, showEval, onToggleEval}: ActionBarProps) {
               onClick={game.toggleShowAllMoves} disabled={!active} title="Show every square each side can reach" aria-label="Threats">
         <EyeIcon /> <span className="btn-label">Threats</span>
       </button>
-      <button type="button" className={`btn btn-toggle ${showEval ? 'on' : ''}`} aria-pressed={showEval}
-              onClick={onToggleEval} title="Show the neural net's estimate of who's winning" aria-label="Evaluation bar">
-        <GaugeIcon /> <span className="btn-label">Eval</span>
-      </button>
+      {onToggleEval && (
+        <button type="button" className={`btn btn-toggle ${showEval ? 'on' : ''}`} aria-pressed={showEval}
+                onClick={onToggleEval} title="Show the neural net's estimate of who's winning" aria-label="Evaluation bar">
+          <GaugeIcon /> <span className="btn-label">Eval</span>
+        </button>
+      )}
       </div>
     </div>
   );

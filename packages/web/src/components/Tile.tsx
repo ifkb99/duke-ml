@@ -1,3 +1,4 @@
+import {useState} from 'react';
 import type {Player, Side} from '@the-duke/engine';
 import {TILE_REGISTRY} from '@the-duke/engine';
 import {type Orientation, patternRowSign, shortName} from '../ui.js';
@@ -9,19 +10,21 @@ interface TileFaceProps {
   owner: Player;
   side: Side;
   bottom: Orientation;
-  /** Plays the flip animation when it mounts (the side just changed) */
+  /** Plays the flip animation when it mounts (the side just changed). Read once: later renders don't replay it. */
   flipped?: boolean;
 }
 
 /** A tile as it lies on the board: its moves for the side facing up, and its name. */
 export function TileFace({name, owner, side, bottom, flipped}: TileFaceProps) {
+  // Board's Piece passes true on every render after its first, so only the value at mount counts
+  const [flipOnMount] = useState(flipped);
   const def = TILE_REGISTRY.get(name);
   const face = def ? (side === 'B' ? def.sideB : def.sideA) : null;
   const rowSign = patternRowSign(owner, bottom);
   // Longbowman B strikes 2 and 3 squares ahead: shift its center back to fit them
   const center = name === 'Longbowman' && side === 'B' ? {row: rowSign > 0 ? 3 : 1, col: 2} : undefined;
   const classes = ['tile', owner === 'P1' ? 'tile-light' : 'tile-dark', `tile-side-${side.toLowerCase()}`,
-    name === 'Duke' && 'tile-duke', flipped && 'tile-flip'].filter(Boolean).join(' ');
+    name === 'Duke' && 'tile-duke', flipOnMount && 'tile-flip'].filter(Boolean).join(' ');
   return (
     <div className={classes}>
       {side === 'B' && <span className="tile-corners" aria-hidden />}
