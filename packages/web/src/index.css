@@ -225,6 +225,9 @@ button, input, select { font: inherit; color: inherit; }
   .matchup { display: none; }
   .brand h1 { font-size: 1rem; }
   .topbar .btn { margin-left: auto; }
+  /* How to play shrinks to its icon, beside New game */
+  .topbar .btn-help .btn-label { display: none; }
+  .topbar .btn-help + .btn { margin-left: 0; }
   :root { --topbar: 44px; }
 }
 

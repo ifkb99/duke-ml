@@ -45,3 +45,19 @@ export const InfoIcon = () => (
 export const ChevronUpIcon = () => (
   <svg {...props}><path d="m6 15 6-6 6 6" /></svg>
 );
+
+export const HelpIcon = () => (
+  <svg {...props}><circle cx="12" cy="12" r="9" /><path d="M9.6 9.3a2.5 2.5 0 0 1 4.85.85c0 1.65-2.45 2.2-2.45 3.6M12 17v.01" /></svg>
+);
+
+export const ChevronLeftIcon = () => (
+  <svg {...props}><path d="m15 6-6 6 6 6" /></svg>
+);
+
+export const ChevronRightIcon = () => (
+  <svg {...props}><path d="m9 6 6 6-6 6" /></svg>
+);
+
+export const CheckIcon = () => (
+  <svg {...props}><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+);

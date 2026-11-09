@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState, type ReactNode} from 'react';
 import type {Player} from '@the-duke/engine';
 import {type GameMode, MODE_NAME, PLAYER_NAME} from '../ui.js';
-import {CloseIcon, PlusIcon, RematchIcon} from './Icons.js';
+import {CloseIcon, HelpIcon, PlusIcon, RematchIcon} from './Icons.js';
 import {Crown} from './Tile.js';
 
 export function Modal({open, onClose, label, children}: {open: boolean; onClose: () => void; label: string; children: ReactNode}) {
@@ -133,5 +133,28 @@ export function GameOver({winner, reason, human, mode, onRematch, onNewGame, onD
         </div>
       </div>
     </div>
+  );
+}
+
+/** The first visit: offer the tutorial before the first game. */
+export function WelcomeDialog({open, onStart, onSkip}: {open: boolean; onStart: () => void; onSkip: () => void}) {
+  return (
+    <Modal open={open} onClose={onSkip} label="Welcome">
+      <header className="modal-head">
+        <h2><Crown className="crown modal-crown" /> Welcome</h2>
+        <button type="button" className="icon-btn" onClick={onSkip} aria-label="Close"><CloseIcon /></button>
+      </header>
+      <p className="welcome-text">
+        New to The Duke? A short, hands-on tutorial teaches the rules in a few minutes: how tiles move and
+        flip, drawing new tiles, and how to checkmate the enemy Duke.
+      </p>
+      <p className="welcome-text welcome-note">You can open it again any time with the <HelpIcon /> button.</p>
+      <footer className="modal-foot welcome-foot">
+        <button type="button" className="btn btn-big" onClick={onSkip}>I know how to play</button>
+        <button type="button" className="btn btn-gold btn-big" onClick={onStart} autoFocus>
+          <HelpIcon /> Start the tutorial
+        </button>
+      </footer>
+    </Modal>
   );
 }

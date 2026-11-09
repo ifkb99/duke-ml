@@ -4,13 +4,14 @@ import {ActionBar} from './components/ActionBar.js';
 import {AppUpdate} from './components/AppUpdate.js';
 import {BagDrawer, BagStrip} from './components/Bags.js';
 import {Board} from './components/Board.js';
-import {GameOver, NewGameDialog} from './components/Dialogs.js';
+import {GameOver, NewGameDialog, WelcomeDialog} from './components/Dialogs.js';
 import {EvalBar} from './components/EvalBar.js';
-import {PlusIcon} from './components/Icons.js';
+import {HelpIcon, PlusIcon} from './components/Icons.js';
 import {Inspector, Legend, SymbolKey, inspectorSubject} from './components/Inspector.js';
 import {StatusLine} from './components/StatusLine.js';
 import {Crown} from './components/Tile.js';
-import {useGame} from './hooks/useGame.js';
+import {SAVE_KEY, useGame} from './hooks/useGame.js';
+import {Tutorial} from './tutorial/Tutorial.js';
 import {type GameMode, MODE_NAME, PLAYER_NAME, endReason, other} from './ui.js';
 import './components/controls.css';
 
@@ -33,9 +34,87 @@ function loadSettings(): Settings {
   }
 }
 
+// Set once someone has opened the tutorial or turned it down, so it's offered once
+const TUTORIAL_KEY = 'duke-tutorial';
+
+/** Nobody has played here before: no tutorial seen, and nothing saved from a game. */
+function isFirstVisit(): boolean {
+  try {
+    return [TUTORIAL_KEY, STORAGE_KEY, SAVE_KEY].every(k => localStorage.getItem(k) === null);
+  } catch {
+    return false;   // no storage: don't ask on every visit
+  }
+}
+
+function rememberTutorial() {
+  try { localStorage.setItem(TUTORIAL_KEY, 'seen'); } catch { /* private mode */ }
+}
+
+type Route = 'game' | 'tutorial';
+/** The tutorial has its own address, so it can be linked to and survives a reload. */
+const currentRoute = (): Route => (location.hash === '#tutorial' ? 'tutorial' : 'game');
+
 export function App() {
+  const [route, setRoute] = useState(currentRoute);
+  // Read before the game's first save, which would make every visit look like a return
+  const [offerTutorial, setOfferTutorial] = useState(() => currentRoute() === 'game' && isFirstVisit());
+  // Finishing the tutorial goes on to pick an opponent
+  const [newGameOnReturn, setNewGameOnReturn] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setRoute(currentRoute());
+    window.addEventListener('popstate', sync);
+    window.addEventListener('hashchange', sync);
+    return () => {
+      window.removeEventListener('popstate', sync);
+      window.removeEventListener('hashchange', sync);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (route === 'tutorial') rememberTutorial();
+  }, [route]);
+
+  const openTutorial = useCallback(() => {
+    setOfferTutorial(false);
+    setNewGameOnReturn(false);
+    history.pushState({tutorial: true}, '', '#tutorial');
+    setRoute('tutorial');
+  }, []);
+
+  const closeTutorial = useCallback((thenNewGame: boolean) => {
+    setNewGameOnReturn(thenNewGame);
+    // Opened from the game: step back, so Back doesn't return to the tutorial
+    if (history.state?.tutorial) history.back();
+    else history.replaceState(null, '', location.pathname + location.search);
+    setRoute('game');
+  }, []);
+
+  const skipTutorial = useCallback(() => {
+    rememberTutorial();
+    setOfferTutorial(false);
+  }, []);
+
+  return (
+    <>
+      {route === 'tutorial'
+        ? <Tutorial onExit={() => closeTutorial(false)} onFinish={() => closeTutorial(true)} />
+        : <Game onHowToPlay={openTutorial} startWithNewGame={newGameOnReturn} />}
+      <WelcomeDialog open={offerTutorial && route === 'game'} onStart={openTutorial} onSkip={skipTutorial} />
+      <AppUpdate />
+    </>
+  );
+}
+
+interface GameProps {
+  onHowToPlay: () => void;
+  /** Open the New game dialog straight away */
+  startWithNewGame: boolean;
+}
+
+function Game({onHowToPlay, startWithNewGame}: GameProps) {
   const [settings, setSettings] = useState<Settings>(loadSettings);
-  const [newGameOpen, setNewGameOpen] = useState(false);
+  const [newGameOpen, setNewGameOpen] = useState(startWithNewGame);
   const [resultDismissed, setResultDismissed] = useState(false);
   const [bagOpen, setBagOpen] = useState(false);
   const [keyOpen, setKeyOpen] = useState(false);
@@ -89,6 +168,9 @@ export function App() {
         <span className="matchup">
           {mode === 'hotseat' ? 'Hot seat' : <>You play <b className={human === 'P1' ? 'text-light' : 'text-dark'}>{PLAYER_NAME[human]}</b> vs {MODE_NAME[mode]}</>}
         </span>
+        <button type="button" className="btn btn-help" onClick={onHowToPlay} aria-label="How to play">
+          <HelpIcon /> <span className="btn-label">How to play</span>
+        </button>
         <button type="button" className="btn" onClick={() => setNewGameOpen(true)}>
           <PlusIcon /> <span className="btn-label">New game</span>
         </button>
@@ -97,6 +179,9 @@ export function App() {
       <main className={`layout ${inspecting ? 'inspecting' : ''} ${showEval ? 'with-eval' : ''}`}>
         <div className="area-status">
           <StatusLine game={game} mode={mode} human={humanSide} />
+          <button type="button" className="btn status-new status-help" onClick={onHowToPlay} aria-label="How to play">
+            <HelpIcon />
+          </button>
           <button type="button" className="btn status-new" onClick={() => setNewGameOpen(true)} aria-label="New game">
             <PlusIcon />
           </button>
@@ -155,7 +240,6 @@ export function App() {
 
       <SymbolKey open={keyOpen} onClose={() => setKeyOpen(false)} />
       <NewGameDialog open={newGameOpen} mode={mode} human={human} onClose={() => setNewGameOpen(false)} onStart={start} />
-      <AppUpdate />
     </div>
   );
 }
