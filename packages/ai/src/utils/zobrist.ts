@@ -204,7 +204,9 @@ const TT_MASK = TT_SIZE - 1;
 
 const TT_HASH  = new Int32Array(TT_SIZE);
 const TT_DEPTH = new Int16Array(TT_SIZE);
-const TT_SCORE = new Float32Array(TT_SIZE);
+// f64, not f32: quiescence probes the TT at every leaf, and f32 rounding of
+// stored scores (~0.008 near the ±1e5 win scores) leaked into search results.
+const TT_SCORE = new Float64Array(TT_SIZE);
 const TT_FLAG  = new Uint8Array(TT_SIZE);
 const TT_MOVE  = new Int32Array(TT_SIZE); // encoded best move
 

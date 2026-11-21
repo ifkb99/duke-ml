@@ -1,6 +1,6 @@
 import type {DrawOutcome, GameMove, GameState, Player} from '@the-duke/engine';
-import {enumerateDrawOutcomes, findDukePosition, generatePseudoLegalMoves, isPlayerInCheck, isSquareAttackedBy, makeMove, unmakeMove} from '@the-duke/engine';
-import {evaluate, evaluatePlacement} from './evaluate.js';
+import {enumerateDrawOutcomes, findDukePosition, generatePseudoLegalMoves, getDrawTargets, isPlayerInCheck, isSquareAttackedBy, makeMove, unmakeMove} from '@the-duke/engine';
+import {evaluate, evaluatePlacement, tileValue} from './evaluate.js';
 import {
   TT_EXACT, TT_LOWER, TT_UPPER,
   hashState, hashAfterMove, ttStore, ttProbe, ttProbeMove, ttClear,
@@ -10,7 +10,47 @@ import {
 export interface MinimaxResult {
   move: GameMove | null;
   score: number;
+  /** All nodes visited: the full-width tree plus quiescence nodes. */
   nodesSearched: number;
+  /** The subset of `nodesSearched` that lies beyond the horizon (quiescence). */
+  quiescenceNodes: number;
+}
+
+export interface SearchOptions {
+  /**
+   * Extend leaves with a capture-only quiescence search instead of returning
+   * the static evaluation at depth 0. Off by default, so existing callers
+   * (web worker, selfplay, neural-eval, zero minimax-server) keep the old
+   * search; whether to enable it is the repo owner's call. In seeded matches
+   * (harness match CLI, minimax-q:<d> vs minimax-noq:<d>) it beat the plain
+   * search at every depth tried, 1-6, scoring 0.80-0.94, at 1.1-4.7x the time
+   * per move. Against the plain search one ply deeper it scored 0.79 (q2 vs 3)
+   * and 0.71 (q3 vs 4), but only 0.55 [0.48, 0.62] at q5 vs 6, while taking
+   * 1.2-1.6x its time: the gain fades at depth 5-6, which the web uses.
+   */
+  quiescence?: boolean;
+  /** Maximum quiescence plies beyond the horizon (default 6). */
+  quiescenceDepth?: number;
+}
+
+export const DEFAULT_QUIESCENCE_DEPTH = 6;
+
+/** Per-search state threaded through the recursion. */
+interface SearchContext {
+  /** Full-width nodes, including the horizon nodes where quiescence starts. */
+  nodes: number;
+  /** Quiescence nodes below the horizon node. */
+  qNodes: number;
+  /** Quiescence ply cap; 0 disables quiescence. */
+  qDepth: number;
+}
+
+function makeContext(options: SearchOptions): SearchContext {
+  const qDepth = (options.quiescence ?? false) ? (options.quiescenceDepth ?? DEFAULT_QUIESCENCE_DEPTH) : 0;
+  if (!Number.isInteger(qDepth) || qDepth < 0) {
+    throw new Error(`quiescenceDepth must be a non-negative integer, got ${options.quiescenceDepth}`);
+  }
+  return {nodes: 0, qNodes: 0, qDepth};
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +189,7 @@ function applyAndSearch(
   beta: number,
   childMaximizing: boolean,
   hash: number,
-  stats: {nodes: number},
+  ctx: SearchContext,
   allowNull: boolean,
 ): number | null {
   const undo = makeMove(state, move);
@@ -158,7 +198,7 @@ function applyAndSearch(
     return null;
   }
   const newHash = hashAfterMove(hash, state, undo);
-  const score = minimax(state, depth, alpha, beta, childMaximizing, newHash, stats, allowNull);
+  const score = minimax(state, depth, alpha, beta, childMaximizing, newHash, ctx, allowNull);
   unmakeMove(state, undo);
   return score;
 }
@@ -179,7 +219,7 @@ function evaluateChanceNode(
   depth: number,
   maximizing: boolean,
   hash: number,
-  stats: {nodes: number},
+  ctx: SearchContext,
 ): number {
   let expectedValue = 0;
 
@@ -196,7 +236,7 @@ function evaluateChanceNode(
       : placements;
 
     for (const move of sorted) {
-      const score = applyAndSearch(state, move, mover, depth - 1, -Infinity, Infinity, !maximizing, hash, stats, true);
+      const score = applyAndSearch(state, move, mover, depth - 1, -Infinity, Infinity, !maximizing, hash, ctx, true);
       if (score === null) continue;
       bestPlacementScore = maximizing
         ? Math.max(bestPlacementScore, score)
@@ -210,6 +250,119 @@ function evaluateChanceNode(
 }
 
 // ---------------------------------------------------------------------------
+// Quiescence search
+//
+// At the horizon, keep searching "noisy" moves until the position is quiet,
+// so a leaf with a capture pending isn't scored as if nothing were hanging.
+//
+// Noisy = any board move that removes an enemy tile: a move/jump/slide onto an
+// enemy, a strike, or a command whose destination holds an enemy (the
+// commanded tile captures exactly like a move does, so the evaluation swings
+// by the same material). Everything else is quiet: non-capturing moves and
+// commands only reposition or flip tiles, and draws are chance nodes whose
+// value is an expectation over the bag; expanding them here would bring back
+// the full-width chance branching that quiescence exists to avoid.
+//
+// If the side to move is in check it may not stand pat (its Duke would be
+// taken next move), so every legal board move is searched as an evasion. If
+// there is none but a draw could block the check we fall back to the static
+// score rather than expand the chance node; with no draw either, it's mate.
+//
+// Quiescence stores TT entries at depth 0: the full-width search (depth >= 1)
+// never accepts them, and the replacement policy never lets them overwrite a
+// deeper entry. Quiescence in turn accepts any full-width entry. Killers are
+// left alone (they are indexed by full-width depth and only hold quiet moves).
+// ---------------------------------------------------------------------------
+
+/** Ordering for quiescence: TT move, Duke captures, then MVV-LVA, then quiet evasions. */
+function quiescenceOrder(move: GameMove, state: GameState, pvEncoded: number): number {
+  if (pvEncoded !== 0 && encodeMove(move) === pvEncoded) return 1e9;
+  let victimSq, attackerSq;
+  switch (move.type) {
+    case 'move': victimSq = move.to; attackerSq = move.from; break;
+    case 'strike': victimSq = move.target; attackerSq = move.from; break;
+    case 'command': victimSq = move.targetTo; attackerSq = move.target; break;
+    default: return -1;
+  }
+  const victimId = state.board[victimSq.row][victimSq.col];
+  if (!victimId) return 0;
+  const victim = state.tiles.get(victimId)!;
+  if (victim.defName === 'Duke') return 1e8;
+  const attacker = state.tiles.get(state.board[attackerSq.row][attackerSq.col]!)!;
+  return 1000 + 16 * tileValue(victim.defName) - tileValue(attacker.defName);
+}
+
+function quiesce(
+  state: GameState,
+  qply: number,
+  alpha: number,
+  beta: number,
+  maximizing: boolean,
+  hash: number,
+  ctx: SearchContext,
+): number {
+  // The horizon node itself (qply 0) was already counted by minimax().
+  if (qply > 0) ctx.qNodes++;
+
+  if (state.status !== 'active') return terminalScore(state.status === 'P1_wins', 0);
+  if (qply >= ctx.qDepth) return evaluate(state);
+
+  const ttHit = ttProbe(hash, 0, alpha, beta);
+  if (ttHit !== null) return ttHit;
+
+  const mover = state.currentPlayer;
+  const inCheck = isPlayerInCheck(state, mover);
+  const standPat = evaluate(state);
+  const origAlpha = alpha;
+  const origBeta = beta;
+  let best = maximizing ? -Infinity : Infinity;
+
+  if (!inCheck) {
+    // Stand pat: the side to move can decline every capture.
+    if (maximizing ? standPat >= beta : standPat <= alpha) return standPat;
+    best = standPat;
+    if (maximizing) alpha = Math.max(alpha, standPat);
+    else beta = Math.min(beta, standPat);
+  }
+
+  const pvEncoded = ttProbeMove(hash);
+  const candidates = generatePseudoLegalMoves(state)
+    .filter(m => (inCheck ? m.type !== 'draw' && m.type !== 'place' : isCapture(m, state)))
+    .map(m => ({m, order: quiescenceOrder(m, state, pvEncoded)}))
+    .sort((a, b) => b.order - a.order);
+
+  let bestEncoded = 0;
+  let hasLegalMove = false;
+
+  for (const {m: move} of candidates) {
+    const undo = makeMove(state, move);
+    if (!isLegalAfterMake(state, mover)) {
+      unmakeMove(state, undo);
+      continue;
+    }
+    const score = quiesce(state, qply + 1, alpha, beta, !maximizing, hashAfterMove(hash, state, undo), ctx);
+    unmakeMove(state, undo);
+    hasLegalMove = true;
+
+    if (maximizing ? score > best : score < best) {
+      best = score;
+      bestEncoded = encodeMove(move);
+    }
+    if (maximizing) alpha = Math.max(alpha, best);
+    else beta = Math.min(beta, best);
+    if (alpha >= beta) break;
+  }
+
+  if (inCheck && !hasLegalMove) {
+    return getDrawTargets(state).length > 0 ? standPat : terminalScore(!maximizing, 0);
+  }
+
+  const flag = best <= origAlpha ? TT_UPPER : best >= origBeta ? TT_LOWER : TT_EXACT;
+  ttStore(hash, 0, best, flag, bestEncoded);
+  return best;
+}
+
+// ---------------------------------------------------------------------------
 // Minimax with alpha-beta + TT + null-move pruning + LMR + expectimax draws
 // ---------------------------------------------------------------------------
 
@@ -220,13 +373,15 @@ function minimax(
   beta: number,
   maximizing: boolean,
   hash: number,
-  stats: {nodes: number},
+  ctx: SearchContext,
   allowNull: boolean,
 ): number {
-  stats.nodes++;
+  ctx.nodes++;
 
   if (state.status !== 'active') return terminalScore(state.status === 'P1_wins', depth);
-  if (depth <= 0) return evaluate(state);
+  if (depth <= 0) {
+    return ctx.qDepth > 0 ? quiesce(state, 0, alpha, beta, maximizing, hash, ctx) : evaluate(state);
+  }
 
   // Transposition table probe
   const ttHit = ttProbe(hash, depth, alpha, beta);
@@ -243,7 +398,7 @@ function minimax(
     state.currentPlayer = opponent;
     const nullHash = hash ^ 0; // turn key XOR handled by passing !maximizing
     // Null move = opponent gets an extra turn. Flip hash turn key manually.
-    const nullScore = minimax(state, depth - 1 - R, alpha, beta, !maximizing, nullHash ^ hashNullMoveDelta(), stats, false);
+    const nullScore = minimax(state, depth - 1 - R, alpha, beta, !maximizing, nullHash ^ hashNullMoveDelta(), ctx, false);
     state.currentPlayer = mover;
 
     if (maximizing ? nullScore >= beta : nullScore <= alpha) {
@@ -277,14 +432,14 @@ function minimax(
       searchDepth = depth - 2; // reduced search
     }
 
-    let score = applyAndSearch(state, move, mover, searchDepth, alpha, beta, !maximizing, hash, stats, true);
+    let score = applyAndSearch(state, move, mover, searchDepth, alpha, beta, !maximizing, hash, ctx, true);
     if (score === null) continue;
 
     // Re-search at full depth if LMR found a promising score
     if (doLMR) {
       const promising = maximizing ? score > alpha : score < beta;
       if (promising) {
-        score = applyAndSearch(state, move, mover, depth - 1, alpha, beta, !maximizing, hash, stats, true)!;
+        score = applyAndSearch(state, move, mover, depth - 1, alpha, beta, !maximizing, hash, ctx, true)!;
       }
     }
 
@@ -317,7 +472,7 @@ function minimax(
   // Chance nodes — search 3 plies shallower than board moves
   if (drawOutcomes.length > 0 && alpha < beta) {
     const drawDepth = Math.max(depth - 3, 0);
-    const drawScore = evaluateChanceNode(drawOutcomes, state, mover, drawDepth, maximizing, hash, stats);
+    const drawScore = evaluateChanceNode(drawOutcomes, state, mover, drawDepth, maximizing, hash, ctx);
     hasLegalMove = true;
     if (maximizing) {
       bestScore = Math.max(bestScore, drawScore);
@@ -378,15 +533,22 @@ function hashNullMoveDelta(): number {
  *
  * `rng` (uniform in [0, 1)) samples the tile when a draw is chosen; pass a
  * seeded one for reproducible results. Call `ttClear()` between searches you
- * want to compare, since the transposition table persists across calls.
+ * want to compare, since the transposition table persists across calls (and
+ * always between searches with different `options`: scores stored with and
+ * without quiescence are not interchangeable).
  */
-export function findBestMove(state: GameState, maxDepth = 6, rng: () => number = Math.random): MinimaxResult {
+export function findBestMove(
+  state: GameState,
+  maxDepth = 6,
+  rng: () => number = Math.random,
+  options: SearchOptions = {},
+): MinimaxResult {
   const allMoves = generatePseudoLegalMoves(state);
-  if (allMoves.length === 0) return {move: null, score: 0, nodesSearched: 0};
+  if (allMoves.length === 0) return {move: null, score: 0, nodesSearched: 0, quiescenceNodes: 0};
 
   const maximizing = state.currentPlayer === 'P1';
   const mover = state.currentPlayer;
-  const stats = {nodes: 0};
+  const ctx = makeContext(options);
   const rootHash = hashState(state);
 
   const {boardMoves, drawOutcomes} = splitMoves(allMoves, state);
@@ -405,7 +567,7 @@ export function findBestMove(state: GameState, maxDepth = 6, rng: () => number =
     const orderedBoardMoves = orderMoves(boardMoves, state, pvEncoded, d);
 
     for (const move of orderedBoardMoves) {
-      const score = applyAndSearch(state, move, mover, d - 1, alpha, beta, !maximizing, rootHash, stats, true);
+      const score = applyAndSearch(state, move, mover, d - 1, alpha, beta, !maximizing, rootHash, ctx, true);
       if (score === null) continue;
 
       if (iterBestMove === null) iterBestMove = move;
@@ -423,11 +585,16 @@ export function findBestMove(state: GameState, maxDepth = 6, rng: () => number =
         }
         beta = Math.min(beta, iterBestScore);
       }
+      // Failed outside an aspiration window: the caller re-searches with a
+      // full window. Searching on would hand children an inverted window
+      // (alpha > beta), and the bound flags they store in the TT would be
+      // wrong, poisoning that re-search. Only possible with a window.
+      if (alpha >= beta) break;
     }
 
     // Evaluate draw outcomes
     if (drawOutcomes.length > 0) {
-      const drawScore = evaluateChanceNode(drawOutcomes, state, mover, d, maximizing, rootHash, stats);
+      const drawScore = evaluateChanceNode(drawOutcomes, state, mover, d, maximizing, rootHash, ctx);
       const drawIsBetter = maximizing ? drawScore > iterBestScore : drawScore < iterBestScore;
 
       if (drawIsBetter) {
@@ -442,7 +609,7 @@ export function findBestMove(state: GameState, maxDepth = 6, rng: () => number =
         let bestPlacementScore = maximizing ? -Infinity : Infinity;
 
         for (const move of tilePlacements) {
-          const score = applyAndSearch(state, move, mover, d - 1, -Infinity, Infinity, !maximizing, rootHash, stats, true);
+          const score = applyAndSearch(state, move, mover, d - 1, -Infinity, Infinity, !maximizing, rootHash, ctx, true);
           if (score === null) continue;
           if (maximizing ? score > bestPlacementScore : score < bestPlacementScore) {
             bestPlacementScore = score;
@@ -477,7 +644,7 @@ export function findBestMove(state: GameState, maxDepth = 6, rng: () => number =
     }
   }
 
-  return {move: bestMove, score: bestScore, nodesSearched: stats.nodes};
+  return {move: bestMove, score: bestScore, nodesSearched: ctx.nodes + ctx.qNodes, quiescenceNodes: ctx.qNodes};
 }
 
 export interface ScoredMoves {
@@ -486,6 +653,7 @@ export interface ScoredMoves {
   /** Expected score of drawing a tile (P1's perspective), or null if drawing isn't possible. */
   draw: number | null;
   nodesSearched: number;
+  quiescenceNodes: number;
 }
 
 /**
@@ -494,27 +662,32 @@ export interface ScoredMoves {
  * a full-window search (no root alpha-beta cutoffs), after a normal search one
  * ply shallower has warmed the transposition table for move ordering.
  */
-export function scoreRootMoves(state: GameState, depth = 6, rng: () => number = Math.random): ScoredMoves {
+export function scoreRootMoves(
+  state: GameState,
+  depth = 6,
+  rng: () => number = Math.random,
+  options: SearchOptions = {},
+): ScoredMoves {
   const allMoves = generatePseudoLegalMoves(state);
-  if (allMoves.length === 0) return {moves: [], draw: null, nodesSearched: 0};
-  if (depth > 1) findBestMove(state, depth - 1, rng);
+  if (allMoves.length === 0) return {moves: [], draw: null, nodesSearched: 0, quiescenceNodes: 0};
+  if (depth > 1) findBestMove(state, depth - 1, rng, options);
 
   const maximizing = state.currentPlayer === 'P1';
   const mover = state.currentPlayer;
-  const stats = {nodes: 0};
+  const ctx = makeContext(options);
   const rootHash = hashState(state);
   const {boardMoves, drawOutcomes} = splitMoves(allMoves, state);
 
   const moves: {move: GameMove; score: number}[] = [];
   for (const move of boardMoves) {
     clearKillers();
-    const score = applyAndSearch(state, move, mover, depth - 1, -Infinity, Infinity, !maximizing, rootHash, stats, true);
+    const score = applyAndSearch(state, move, mover, depth - 1, -Infinity, Infinity, !maximizing, rootHash, ctx, true);
     if (score !== null) moves.push({move, score});
   }
   const draw = drawOutcomes.length > 0
-    ? evaluateChanceNode(drawOutcomes, state, mover, depth, maximizing, rootHash, stats)
+    ? evaluateChanceNode(drawOutcomes, state, mover, depth, maximizing, rootHash, ctx)
     : null;
-  return {moves, draw, nodesSearched: stats.nodes};
+  return {moves, draw, nodesSearched: ctx.nodes + ctx.qNodes, quiescenceNodes: ctx.qNodes};
 }
 
 export { ttClear };

@@ -3,7 +3,7 @@
  *
  *   npx tsx packages/harness/src/match.ts --a minimax:3 --b random --games 20 --seed 1
  *
- * Agent specs: `random`, `minimax:<depth>`.
+ * Agent specs: `random`, `minimax:<depth>`, `minimax-q:<depth>`, `minimax-noq:<depth>`.
  * Sides alternate: A moves first (plays P1) in games 1, 3, 5, ...
  *
  * --seed makes a run reproducible. It seeds the setup placements, the random
@@ -13,7 +13,7 @@
 import { pathToFileURL } from 'node:url';
 import type { GameMove, GameState } from '@the-duke/engine';
 import { RandomAgent, makeRng, runMatch, type Agent, type MatchStats, type MoveResult } from './runner';
-import { MinimaxAgent } from './minimax-agent';
+import { MinimaxAgent, emptyTally, type SearchTally } from './minimax-agent';
 
 export const USAGE = `Usage: npx tsx packages/harness/src/match.ts --a <spec> --b <spec> [--games N] [--seed S]
 
@@ -25,7 +25,11 @@ export const USAGE = `Usage: npx tsx packages/harness/src/match.ts --a <spec> --
 
 Agent specs:
   random             uniform random legal move
-  minimax:<depth>    findBestMove from @the-duke/ai at the given depth (1-12)
+  minimax:<depth>     findBestMove from @the-duke/ai at the given depth (1-12),
+                      with the AI's default search options (quiescence off,
+                      so currently the same search as minimax-noq)
+  minimax-q:<depth>   same, with quiescence search at the leaves forced on
+  minimax-noq:<depth> same, with quiescence forced off (the pre-quiescence search)
 
 A moves first in odd-numbered games, B in even-numbered games.`;
 
@@ -34,7 +38,8 @@ export class UsageError extends Error {}
 // ---------------------------------------------------------------------------
 // Argument parsing
 
-export type AgentSpec = { kind: 'random' } | { kind: 'minimax'; depth: number };
+/** `quiescence` is absent for plain `minimax:<d>` (use the AI's default). */
+export type AgentSpec = { kind: 'random' } | { kind: 'minimax'; depth: number; quiescence?: boolean };
 
 export interface MatchArgs {
   a: AgentSpec;
@@ -47,11 +52,14 @@ const MAX_DEPTH = 12;
 
 export function parseAgentSpec(spec: string): AgentSpec {
   if (spec === 'random') return { kind: 'random' };
-  const m = /^minimax:(\d+)$/.exec(spec);
+  const m = /^minimax(-q|-noq)?:(\d+)$/.exec(spec);
   if (m) {
-    const depth = Number(m[1]);
-    if (depth >= 1 && depth <= MAX_DEPTH) return { kind: 'minimax', depth };
-    throw new UsageError(`minimax depth must be between 1 and ${MAX_DEPTH}, got ${m[1]}`);
+    const depth = Number(m[2]);
+    if (!(depth >= 1 && depth <= MAX_DEPTH)) {
+      throw new UsageError(`minimax depth must be between 1 and ${MAX_DEPTH}, got ${m[2]}`);
+    }
+    if (m[1] === undefined) return { kind: 'minimax', depth };
+    return { kind: 'minimax', depth, quiescence: m[1] === '-q' };
   }
   throw new UsageError(`unknown agent spec '${spec}'`);
 }
@@ -124,8 +132,11 @@ class TimedAgent implements Agent {
 }
 
 /** Build a fresh-agent factory for a spec. Random agents get a new seed each game. */
-function agentFactory(spec: AgentSpec, seed: number): () => Agent {
-  if (spec.kind === 'minimax') return () => new MinimaxAgent(spec.depth);
+function agentFactory(spec: AgentSpec, seed: number, tally: SearchTally): () => Agent {
+  if (spec.kind === 'minimax') {
+    const search = spec.quiescence === undefined ? {} : { quiescence: spec.quiescence };
+    return () => new MinimaxAgent(spec.depth, { search, tally });
+  }
   let game = 0;
   return () => new RandomAgent(seed + 7919 * game++);
 }
@@ -134,6 +145,8 @@ export interface MatchReport {
   args: MatchArgs;
   stats: MatchStats;
   timing: { a: MoveTiming; b: MoveTiming };
+  /** Search node counts per side (all zero for non-minimax agents). */
+  nodes: { a: SearchTally; b: SearchTally };
 }
 
 /**
@@ -142,8 +155,9 @@ export interface MatchReport {
  */
 export async function playMatch(args: MatchArgs): Promise<MatchReport> {
   const timing = { a: { moves: 0, totalMs: 0 }, b: { moves: 0, totalMs: 0 } };
-  const makeA = agentFactory(args.a, args.seed * 1_000_003 + 1);
-  const makeB = agentFactory(args.b, args.seed * 1_000_003 + 2);
+  const nodes = { a: emptyTally(), b: emptyTally() };
+  const makeA = agentFactory(args.a, args.seed * 1_000_003 + 1, nodes.a);
+  const makeB = agentFactory(args.b, args.seed * 1_000_003 + 2, nodes.b);
 
   const savedRandom = Math.random;
   Math.random = makeRng(args.seed * 2_654_435_761 + 12345);
@@ -154,7 +168,7 @@ export async function playMatch(args: MatchArgs): Promise<MatchReport> {
       args.games,
       { label: 'match', seed: args.seed * 100_000 },
     );
-    return { args, stats, timing };
+    return { args, stats, timing, nodes };
   } finally {
     Math.random = savedRandom;
   }
@@ -167,16 +181,27 @@ function fmtMs(t: MoveTiming): string {
   return `${s} ms (${t.moves} moves)`;
 }
 
+function fmtNodes(t: SearchTally): string {
+  if (t.searches === 0) return 'n/a';
+  const avg = Math.round(t.nodes / t.searches);
+  const q = t.quiescenceNodes > 0 ? ` (${((100 * t.quiescenceNodes) / t.nodes).toFixed(0)}% quiescence)` : '';
+  return `${avg}${q}`;
+}
+
 export function formatReport(r: MatchReport): string {
-  const { stats, timing, args } = r;
+  const { stats, timing, args, nodes } = r;
   const [lo, hi] = stats.ci95;
-  return [
+  const lines = [
     `A = ${stats.a}, B = ${stats.b}: ${stats.games} games, seed ${args.seed} (A moves first in odd-numbered games)`,
     `A record:       ${stats.aWins} W / ${stats.bWins} L / ${stats.draws} D (draws = ply cap)`,
     `A score:        ${stats.aWinrate.toFixed(3)}  95% Wilson CI [${lo.toFixed(3)}, ${hi.toFixed(3)}] (draws count half)`,
     `Average plies:  ${stats.meanPlies.toFixed(1)}`,
     `Avg time/move:  A ${fmtMs(timing.a)}, B ${fmtMs(timing.b)}`,
-  ].join('\n');
+  ];
+  if (nodes.a.searches > 0 || nodes.b.searches > 0) {
+    lines.push(`Avg nodes/move: A ${fmtNodes(nodes.a)}, B ${fmtNodes(nodes.b)}`);
+  }
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------
