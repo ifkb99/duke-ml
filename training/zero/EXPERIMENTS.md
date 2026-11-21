@@ -1048,3 +1048,33 @@ Web app:
 - **Production**: COOP/COEP headers are no longer needed (one thread); still
   serve the 28 MB jsep wasm gzipped (6.7 MB); difficulty levels; test on iOS
   Safari and an older Android phone.
+
+## az7-drop vs minimax with quiescence search (2026-11-21)
+
+Quiescence search (captures, strikes and capturing commands searched past the
+horizon until quiet, see `packages/ai/src/minimax.ts`) is now an option on
+`findBestMove`. It's off by default. At equal depth it beats plain minimax 0.80–0.94
+(depths 1–6, harness match CLI). Question: is it a tougher yardstick for the
+net? az7-drop (`runs/az7-drop/imitation.pkl`, fp32), 128 games per pairing,
+same game seed for every pairing, fresh minimax pool per configuration
+(`diagnostics/quiescence_eval.py`; the servers keep their TT between requests).
+
+| net sims | m2 | m2q | m4 | m4q | m6 | m6q |
+|---|---|---|---|---|---|---|
+| 32 | 0.969 | 0.891 | 0.922 | 0.918 | 0.895 | 0.820 |
+| 128 | 0.961 | 0.945 | 0.953 | 0.957 | 0.953 | 0.914 |
+
+Mean plies at 32 sims: 17 → 51 (m2 → m2q), 40 → 52, 46 → 57.
+
+- One score has SE ≈ 0.025–0.035 here, so a difference of 0.075 is ~2 SE.
+  **m6q is a modestly tougher opponent than m6** (32 sims: 0.895 → 0.820;
+  128 sims: 0.953 → 0.914). m2q is tougher than m2. At depth 4 there's no difference.
+- **The games get longer.** Plain minimax mostly loses by dropping material in
+  exchanges it can't see the end of, so the net wins fast. With quiescence it
+  holds out ~10 plies longer at depth 6, and 3x longer at depth 2.
+- **As a yardstick:** m6q leaves more headroom than m6 (0.82 vs 0.89 at the
+  training budget), at ~4x the minimax time (394 s vs 92 s per 128 games with
+  16 workers). It doesn't change the picture: az7-drop beats every minimax here 0.82+.
+- **Not tested:** whether a quiescence teacher would make a better warm start
+  (imitation from m4q games vs m4 games, then compare the students). That only
+  matters for a run that starts from minimax rather than from a distilled net.

@@ -33,6 +33,7 @@ class Agent:
     params: object = None          # net
     search: object = None          # net: jitted search(params, key, states, gumbel_scale)
     depth: int | list[int] = 4     # minimax: fixed depth, or per-game list
+    quiescence: bool = False       # minimax: quiescence search at the leaves
     epsilon: float = 0.0           # chance to play a random legal move instead (diversity)
 
     def __post_init__(self):
@@ -103,7 +104,7 @@ def play(agent_a: Agent, agent_b: Agent, n_games: int, key, pool=None, record=Fa
                     actions[i] = rng.choice(np.flatnonzero(legal[i]))
                 ask = np.flatnonzero(mask & ~queue & (pending == E.NONE))
                 depths = agent.depth if isinstance(agent.depth, int) else [agent.depth[i] for i in ask]
-                moves = pool.best_moves([B.state_to_ts(_unbatch(s, i)) for i in ask], depths)
+                moves = pool.best_moves([B.state_to_ts(_unbatch(s, i)) for i in ask], depths, agent.quiescence)
                 for i, move in zip(ask, moves):
                     st = _unbatch(s, i)
                     seq = B.move_to_actions(move, int(st.player), B.duke_square(st.tile, st.owner))

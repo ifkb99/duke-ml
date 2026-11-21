@@ -29,6 +29,8 @@ interface Request {
   id: unknown;
   state?: SerializedGameState;
   depth?: number;
+  /** Quiescence search at the leaves (off by default, like findBestMove). */
+  quiescence?: boolean;
   reset?: boolean;
   scoreMoves?: boolean;
 }
@@ -54,6 +56,6 @@ rl.on('line', line => {
     }) + '\n');
     return;
   }
-  const result = findBestMove(state, req.depth ?? 4);
+  const result = findBestMove(state, req.depth ?? 4, undefined, {quiescence: req.quiescence ?? false});
   process.stdout.write(JSON.stringify({id: req.id, move: result.move, score: result.score}) + '\n');
 });

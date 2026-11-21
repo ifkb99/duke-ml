@@ -37,8 +37,11 @@ class _Worker:
             raise ConnectionError(f'minimax server exited (code {self.proc.wait()})')
         return json.loads(line)
 
-    def ask(self, state: dict, depth: int) -> dict:
-        return self.request({'state': state, 'depth': depth})['move']
+    def ask(self, state: dict, depth: int, quiescence: bool = False) -> dict:
+        req = {'state': state, 'depth': depth}
+        if quiescence:
+            req['quiescence'] = True
+        return self.request(req)['move']
 
     def close(self):
         try:
@@ -58,8 +61,8 @@ class MinimaxPool:
             self._free.put(w)
         self._executor = ThreadPoolExecutor(n)
 
-    def _ask(self, state, depth):
-        return self._call(lambda w: w.ask(state, depth))
+    def _ask(self, state, depth, quiescence=False):
+        return self._call(lambda w: w.ask(state, depth, quiescence))
 
     def _call(self, fn):
         w = self._free.get()
@@ -76,10 +79,13 @@ class MinimaxPool:
         finally:
             self._free.put(w)
 
-    def best_moves(self, states: list[dict], depth: int | list[int]) -> list[dict]:
-        """Best move for each TS state, computed in parallel. `depth` may be per-state."""
+    def best_moves(self, states: list[dict], depth: int | list[int], quiescence: bool = False) -> list[dict]:
+        """Best move for each TS state, computed in parallel. `depth` may be per-state.
+
+        Each server keeps its transposition table between requests, so don't mix
+        quiescence and plain searches in one pool: entries from one leak into the other."""
         depths = depth if isinstance(depth, list) else [depth] * len(states)
-        return list(self._executor.map(self._ask, states, depths))
+        return list(self._executor.map(lambda st, d: self._ask(st, d, quiescence), states, depths))
 
     def score_moves(self, states: list[dict], depth: int) -> list[dict]:
         """Every legal move's exact score for the player to move, per state:
