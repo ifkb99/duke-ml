@@ -375,8 +375,12 @@ function hashNullMoveDelta(): number {
  * Find the best move using iterative deepening minimax with alpha-beta pruning.
  * Evaluates from P1's perspective: P1 maximizes, P2 minimizes.
  * Draw moves are treated as chance nodes (expectimax).
+ *
+ * `rng` (uniform in [0, 1)) samples the tile when a draw is chosen; pass a
+ * seeded one for reproducible results. Call `ttClear()` between searches you
+ * want to compare, since the transposition table persists across calls.
  */
-export function findBestMove(state: GameState, maxDepth = 6): MinimaxResult {
+export function findBestMove(state: GameState, maxDepth = 6, rng: () => number = Math.random): MinimaxResult {
   const allMoves = generatePseudoLegalMoves(state);
   if (allMoves.length === 0) return {move: null, score: 0, nodesSearched: 0};
 
@@ -431,7 +435,7 @@ export function findBestMove(state: GameState, maxDepth = 6): MinimaxResult {
         // Draw for real (uniformly from the bag), then choose the best square
         // for the revealed tile — the same order as the physical game.
         const bag = state.bags[state.currentPlayer];
-        const randomTile = bag[Math.floor(Math.random() * bag.length)];
+        const randomTile = bag[Math.floor(rng() * bag.length)];
         const tilePlacements = drawOutcomes.find(o => o.tileName === randomTile)?.placements ?? [];
 
         let bestPlacement: GameMove | null = null;
@@ -490,10 +494,10 @@ export interface ScoredMoves {
  * a full-window search (no root alpha-beta cutoffs), after a normal search one
  * ply shallower has warmed the transposition table for move ordering.
  */
-export function scoreRootMoves(state: GameState, depth = 6): ScoredMoves {
+export function scoreRootMoves(state: GameState, depth = 6, rng: () => number = Math.random): ScoredMoves {
   const allMoves = generatePseudoLegalMoves(state);
   if (allMoves.length === 0) return {moves: [], draw: null, nodesSearched: 0};
-  if (depth > 1) findBestMove(state, depth - 1);
+  if (depth > 1) findBestMove(state, depth - 1, rng);
 
   const maximizing = state.currentPlayer === 'P1';
   const mover = state.currentPlayer;
