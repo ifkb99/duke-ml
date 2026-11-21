@@ -1,6 +1,6 @@
 export { pickRandomMove } from './random.js';
 export { evaluate } from './evaluate.js';
-export { findBestMove, ttClear, type MinimaxResult } from './minimax.js';
+export { findBestMove, ttClear, DEFAULT_QUIESCENCE_DEPTH, type MinimaxResult, type SearchOptions } from './minimax.js';
 export {
   selfPlay,
   selfPlayBatch,

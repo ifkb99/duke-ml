@@ -43,7 +43,12 @@ console.log(JSON.stringify(stats, null, 2));
 assert.equal(new MinimaxAgent(3).name, 'minimax-d3');
 assert.deepEqual(parseAgentSpec('minimax:2'), { kind: 'minimax', depth: 2 });
 assert.deepEqual(parseAgentSpec('random'), { kind: 'random' });
-for (const bad of ['minimax', 'minimax:0', 'minimax:x', 'greedy']) {
+assert.deepEqual(parseAgentSpec('minimax-q:3'), { kind: 'minimax', depth: 3, quiescence: true });
+assert.deepEqual(parseAgentSpec('minimax-noq:3'), { kind: 'minimax', depth: 3, quiescence: false });
+assert.equal(new MinimaxAgent(2, { search: { quiescence: false } }).name, 'minimax-noq-d2');
+assert.equal(new MinimaxAgent(2, { search: { quiescence: true } }).name, 'minimax-q-d2');
+assert.equal(new MinimaxAgent(2, 'custom').name, 'custom');
+for (const bad of ['minimax', 'minimax:0', 'minimax:x', 'greedy', 'minimax-q:0', 'minimax-qq:2', 'minimax-noq']) {
   assert.throws(() => parseAgentSpec(bad), UsageError, `spec '${bad}' should be rejected`);
 }
 assert.throws(() => parseArgs(['--a', 'random', '--b', 'random', '--bogus', '1']), UsageError);
@@ -64,6 +69,20 @@ assert.ok(
 );
 const mmReplay = await playMatch(mmArgs);
 assert.deepEqual(mmReplay.stats, mmReport.stats, 'seeded match should be reproducible');
+assert.ok(mmReport.nodes.a.searches > 0, 'minimax agent reports its searches');
+assert.equal(mmReport.nodes.a.quiescenceNodes, 0, 'plain minimax:<d> follows the AI default (quiescence off)');
+assert.equal(mmReport.nodes.b.searches, 0, 'random agent runs no searches');
+
+// Quiescence on vs off in one seeded match.
+const qArgs = parseArgs(['--a', 'minimax-q:1', '--b', 'minimax-noq:1', '--games', '4', '--seed', '1']);
+assert.ok(qArgs !== 'help');
+const qReport = await playMatch(qArgs);
+console.log('\n--- Match: 4 games minimax-q-d1 vs minimax-noq-d1 (seed 1) ---');
+console.log(formatReport(qReport));
+assert.equal(qReport.stats.a, 'minimax-q-d1');
+assert.ok(qReport.nodes.a.quiescenceNodes > 0, 'minimax-q must run quiescence');
+assert.equal(qReport.nodes.b.quiescenceNodes, 0, 'minimax-noq must not run quiescence');
+assert.deepEqual((await playMatch(qArgs)).stats, qReport.stats, 'q vs noq match should be reproducible');
 
 // --- Single logged game for record shape ---
 const rec = await runGame(new RandomAgent(3), new RandomAgent(4), { gameId: 'demo', seed: 5 });
