@@ -22,7 +22,8 @@ for (const tile of ALL_TILES) {
   TILE_VALUES_BY_INDEX[idx] = scoreTile(tile);
 }
 
-function tileValue(defName: string): number {
+/** Static material value of a tile type (used by evaluate and capture ordering). */
+export function tileValue(defName: string): number {
   const idx = TILE_NAME_INDEX.get(defName);
   return idx !== undefined ? TILE_VALUES_BY_INDEX[idx] : 1;
 }
