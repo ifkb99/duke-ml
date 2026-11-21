@@ -171,8 +171,10 @@ export async function runMatch(
   agentA: () => Agent,
   agentB: () => Agent,
   n: number,
-  opts: { logPath?: string; label?: string } = {},
+  /** seed: base for per-game setup RNG seeds (game i uses seed + i; default 1000). */
+  opts: { logPath?: string; label?: string; seed?: number } = {},
 ): Promise<MatchStats> {
+  const baseSeed = opts.seed ?? 1000;
   const logStream = opts.logPath ? fs.createWriteStream(opts.logPath, { flags: 'a' }) : undefined;
   let aWins = 0, bWins = 0, draws = 0, totalPlies = 0;
   const nameA = agentA().name, nameB = agentB().name;
@@ -182,7 +184,7 @@ export async function runMatch(
     const rec = await runGame(
       aIsP1 ? agentA() : agentB(),
       aIsP1 ? agentB() : agentA(),
-      { gameId: `${opts.label ?? 'match'}-${i}`, seed: 1000 + i, logStream },
+      { gameId: `${opts.label ?? 'match'}-${i}`, seed: baseSeed + i, logStream },
     );
     totalPlies += rec.plies;
     if (rec.winner === 'draw_ply_cap') draws++;
@@ -195,7 +197,7 @@ export async function runMatch(
   return {
     a: nameA, b: nameB, games: n, aWins, bWins, draws,
     aWinrate: effective / n,
-    ci95: wilson(Math.round(effective), n),
+    ci95: wilson(effective, n), // fractional successes are fine for the Wilson formula
     meanPlies: totalPlies / n,
   };
 }
