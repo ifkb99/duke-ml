@@ -208,9 +208,11 @@ self.onmessage = (e: MessageEvent<AIWorkerRequest>) => {
 
     const d = depth ?? 4;
     const t0 = performance.now();
-    const result = findBestMove(state, d);
+    // Quiescence: past the horizon, keep following captures until the position is quiet,
+    // so the AI stops walking into exchanges it can't see the end of.
+    const result = findBestMove(state, d, undefined, {quiescence: true});
     const elapsed = performance.now() - t0;
-    console.log(`[AI] depth=${d} nodes=${result.nodesSearched} time=${elapsed.toFixed(0)}ms score=${result.score}`);
+    console.log(`[AI] depth=${d}+q nodes=${result.nodesSearched} (${result.quiescenceNodes} quiescence) time=${elapsed.toFixed(0)}ms score=${result.score}`);
     self.postMessage({
       id,
       move: result.move,

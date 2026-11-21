@@ -22,7 +22,7 @@ export function Modal({open, onClose, label, children}: {open: boolean; onClose:
 
 const OPPONENTS: {mode: GameMode; blurb: string}[] = [
   {mode: 'vs-zero', blurb: 'Trained by self-play. Runs on your device; thinks ~3 s a move.'},
-  {mode: 'vs-minimax', blurb: 'Classic search, 6 moves deep.'},
+  {mode: 'vs-minimax', blurb: 'Classic search, 6 moves deep, then plays out the captures.'},
   {mode: 'vs-random', blurb: 'Plays any legal move. Good for learning the rules.'},
   {mode: 'hotseat', blurb: 'Two people, one device. Light sits at the bottom.'},
 ];
