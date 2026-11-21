@@ -9,6 +9,9 @@
     "build": "tsc",
     "test": "npx tsx tests/smoke.ts"
   },
+  "dependencies": {
+    "@the-duke/ai": "*"
+  },
   "devDependencies": {
     "typescript": "^5.7.0"
   }
